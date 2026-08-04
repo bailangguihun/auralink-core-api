@@ -1,0 +1,55 @@
+server:
+  port: ${SERVER_PORT:5000}
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: auralink-backend
+  main:
+    allow-bean-definition-overriding: true
+  datasource:
+    url: ${DATABASE_URL:jdbc:sqlite:./data/auralink.db}
+    driver-class-name: org.sqlite.JDBC
+  jpa:
+    database-platform: org.hibernate.community.dialect.SQLiteDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
+      resolve-lazily: true
+  web:
+    cors:
+      allowed-origins: "*"
+      allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD
+      allowed-headers: "*"
+      allow-credentials: false
+      max-age: 3600
+  mvc:
+    async:
+      request-timeout: 120000
+
+auralink:
+  jwt:
+    secret: ${JWT_SECRET}
+    expiration: 604800000
+  service:
+    vmm-url: ${VMM_URL:http://localhost:5001}
+    nonvmm-url: ${VISION_URL:http://localhost:5002}
+  storage:
+    upload-dir: ${UPLOAD_DIR:./data/uploads}
+    audio-dir: ${AUDIO_DIR:./data/audio}
+  paintings:
+    metadata-csv-path: ${PAINTINGS_CSV_PATH:./data/paintings.csv}
+    picture-dir: ${PICTURE_DIR:./data/picture}
+    image-base-url: ${IMAGE_BASE_URL:https://api.auralinks.top/api/paintings/images}
+    default-limit: 500
+    max-limit: 2000
