@@ -1,7 +1,8 @@
 package com.auralink.service;
-import java.io.File;
-import java.io.FileInputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Base64;
+import java.util.Locale;
 import java.net.SocketTimeoutException;
 import java.util.HashMap;
 import java.util.Map;
@@ -23,7 +24,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
-import com.auralink.config.AppConfig.ServiceConfig;
+import com.auralink.config.properties.ServiceProperties;
 import com.auralink.dto.GenerateMusicRequest;
 import com.auralink.dto.ImageDescriptionRequest;
 import com.auralink.dto.RecordApiUsageRequest;
@@ -41,7 +42,7 @@ import lombok.extern.slf4j.Slf4j;
 public class GenerationService {
 
     private final RestTemplate restTemplate;
-    private final ServiceConfig serviceConfig;
+    private final ServiceProperties serviceConfig;
     private final GenerationLogRepository generationLogRepository;
     private final StorageService storageService;
 
@@ -152,14 +153,14 @@ public class GenerationService {
             if (e.getCause() instanceof SocketTimeoutException) {
                 errorMessage = "描述服务响应超时，请稍后再试";
             } else {
-                errorMessage = "无法连接到描述服务: " + e.getMessage();
+                errorMessage = "无法连接到描述服务";
             }
-            log.error("服务连接异常: {}", e.getMessage());
+            log.error("描述服务连接异常: type={}", e.getClass().getSimpleName());
             result.put("success", false);
             result.put("message", errorMessage);
         } catch (Exception e) {
-            log.error("生成图像描述时发生错误: {}", e.getMessage(), e);
-            errorMessage = "生成图像描述时发生错误: " + e.getMessage();
+            log.error("生成图像描述时发生错误: type={}", e.getClass().getSimpleName());
+            errorMessage = "生成图像描述时发生错误";
             result.put("success", false);
             result.put("message", errorMessage);
         }
@@ -178,7 +179,7 @@ public class GenerationService {
         User currentUser = getCurrentUser();
 
         Map<String, Object> requestData = new HashMap<>();
-    requestData.put("image", convertImageToBase64(request.getImageUrl()));
+	requestData.put("image", convertImageToBase64(request.getImageUrl()));
         requestData.put("duration", request.getDuration());
 
         boolean useFastGenerate = request.getUseFastGenerate() != null ? request.getUseFastGenerate() : false;
@@ -294,14 +295,14 @@ public class GenerationService {
             if (e.getCause() instanceof SocketTimeoutException) {
                 errorMessage = "音乐生成服务响应超时，请稍后再试";
             } else {
-                errorMessage = "无法连接到音乐生成服务: " + e.getMessage();
+                errorMessage = "无法连接到音乐生成服务";
             }
-            log.error("服务连接异常: {}", e.getMessage());
+            log.error("音乐生成服务连接异常: type={}", e.getClass().getSimpleName());
             result.put("success", false);
             result.put("message", errorMessage);
         } catch (Exception e) {
-            log.error("生成音乐时发生错误: {}", e.getMessage(), e);
-            errorMessage = "生成音乐时发生错误: " + e.getMessage();
+            log.error("生成音乐时发生错误: type={}", e.getClass().getSimpleName());
+            errorMessage = "生成音乐时发生错误";
             result.put("success", false);
             result.put("message", errorMessage);
         }
@@ -510,7 +511,8 @@ public class GenerationService {
 
                 result.put("success", true);
                 result.put("relativePath", relativePath);
-                result.put("absolutePath", storageService.getAbsolutePath(relativePath));
+                // Retain the legacy field name while returning a non-sensitive relative reference.
+                result.put("absolutePath", relativePath);
                 result.put("logId", request.getLogId());
                 result.put("contentType", request.getContentType());
 
@@ -521,9 +523,10 @@ public class GenerationService {
             }
 
         } catch (Exception e) {
-            log.error("上传结果时出错: {}", e.getMessage(), e);
+            // Remote URLs may contain sensitive query values; do not log the exception/caller URL.
+            log.error("上传结果失败: type={}", e.getClass().getSimpleName());
             result.put("success", false);
-            result.put("message", e.getMessage());
+            result.put("message", "结果文件保存失败");
         }
 
         return result;
@@ -534,67 +537,38 @@ public class GenerationService {
         return (User) authentication.getPrincipal();
     }
     private String convertImageToBase64(String imageUrl) {
-
         try {
+            if (imageUrl == null || imageUrl.isBlank()) {
+                throw new IllegalArgumentException("图片引用不能为空");
+            }
 
-        // imageUrl类似：
-        // http://xxx/api/files/1058505d-xxxx.png
+            // Legacy callers send either a public /api/files URL or a path. The old
+            // implementation intentionally used only the basename, so retain that
+            // contract while resolving it against the configured, contained root.
+            String normalizedReference = imageUrl.replace('\\', '/');
+            int queryIndex = normalizedReference.indexOf('?');
+            if (queryIndex >= 0) {
+                normalizedReference = normalizedReference.substring(0, queryIndex);
+            }
+            int fragmentIndex = normalizedReference.indexOf('#');
+            if (fragmentIndex >= 0) {
+                normalizedReference = normalizedReference.substring(0, fragmentIndex);
+            }
+            String filename = normalizedReference.substring(normalizedReference.lastIndexOf('/') + 1);
+            Path storedImage = storageService.resolveStoredFile(filename);
+            if (!Files.isRegularFile(storedImage)) {
+                throw new IllegalArgumentException("图片不存在");
+            }
 
-        String filename = imageUrl.substring(
-                imageUrl.lastIndexOf("/") + 1
-        );
+            String base64 = Base64.getEncoder().encodeToString(Files.readAllBytes(storedImage));
+            String lowerFilename = filename.toLowerCase(Locale.ROOT);
+            String mime = lowerFilename.endsWith(".jpg") || lowerFilename.endsWith(".jpeg")
+                    ? "image/jpeg"
+                    : "image/png";
 
-
-        String path =
-                "./temp_uploads/" + filename;
-
-
-        File file = new File(path);
-
-
-        if(!file.exists()){
-            throw new RuntimeException(
-                    "图片不存在:" + path
-            );
-        }
-
-
-        FileInputStream fis =
-                new FileInputStream(file);
-
-
-        byte[] bytes =
-                fis.readAllBytes();
-
-
-        fis.close();
-
-
-        String base64 =
-                Base64.getEncoder()
-                .encodeToString(bytes);
-
-
-        String mime = "image/png";
-
-        if(filename.endsWith(".jpg")
-                || filename.endsWith(".jpeg")){
-            mime="image/jpeg";
-        }
-
-
-        return "data:"
-                + mime
-                + ";base64,"
-                + base64;
-
-
-    }catch(Exception e){
-
-        throw new RuntimeException(
-                "图片转换base64失败:"
-                + e.getMessage()
-            );
+            return "data:" + mime + ";base64," + base64;
+        } catch (Exception exception) {
+            throw new IllegalArgumentException("图片转换base64失败", exception);
         }
     }
 }

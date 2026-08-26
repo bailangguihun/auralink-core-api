@@ -24,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.util.StringUtils;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
-import com.auralink.config.AppConfig.PaintingConfig;
+import com.auralink.config.properties.PaintingProperties;
 import com.auralink.dto.ApiResponse;
 import com.auralink.service.PaintingCatalogService;
 import com.auralink.service.PaintingCatalogService.PaintingPage;
@@ -39,7 +39,7 @@ import lombok.extern.slf4j.Slf4j;
 public class PaintingController {
 
     private final PaintingCatalogService paintingCatalogService;
-    private final PaintingConfig paintingConfig;
+    private final PaintingProperties paintingConfig;
 
     @GetMapping
     public ResponseEntity<ApiResponse<Map<String, Object>>> listPaintings(

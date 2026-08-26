@@ -2,9 +2,9 @@ package com.auralink.service;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.URL;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
@@ -24,7 +24,8 @@ import org.apache.commons.io.FilenameUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import com.auralink.config.AppConfig.StorageConfig;
+import com.auralink.config.properties.StorageProperties;
+import com.auralink.exception.InvalidStoragePathException;
 import com.auralink.exception.StorageException;
 
 import lombok.RequiredArgsConstructor;
@@ -35,7 +36,8 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class StorageService {
 
-    private final StorageConfig storageConfig;
+    private final StorageProperties storageConfig;
+    private final SafeRemoteResourceFetcher remoteResourceFetcher;
 
     // 允许的图片文件扩展名
     private static final Set<String> ALLOWED_IMAGE_EXTENSIONS = new HashSet<>(
@@ -104,8 +106,8 @@ public class StorageService {
 
             return targetPath.toAbsolutePath().toString();
         } catch (IOException e) {
-            log.error("文件存储失败: {}", e.getMessage(), e);
-            throw new StorageException("文件存储失败: " + e.getMessage(), e);
+            log.error("文件存储失败: type={}", e.getClass().getSimpleName());
+            throw new StorageException("文件存储失败", e);
         }
     }
 
@@ -207,14 +209,14 @@ public class StorageService {
         // 确保目录存在
         Files.createDirectories(targetPath.getParent());
 
-        // 下载文件
-        try (InputStream inputStream = new URL(remoteUrl).openStream()) {
-            Files.copy(inputStream, targetPath, StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception e) {
-            throw new IOException("下载远程文件失败: " + e.getMessage(), e);
+        // 通过受限的 HTTP(S) 获取边界下载；临时文件只有完整通过大小与地址校验后才会落盘。
+        try {
+            remoteResourceFetcher.fetchTo(remoteUrl, targetPath);
+        } catch (IOException e) {
+            throw new IOException("远程资源下载或安全校验失败", e);
         }
 
-        log.info("远程文件已下载并保存: {}, 来源: {}, 类型: {}", filePath, remoteUrl, contentType);
+        log.info("远程文件已下载并保存: {}, 类型: {}", filePath, contentType);
 
         return getRelativeFilePath(filePath);
     }
@@ -274,17 +276,88 @@ public class StorageService {
      * 获取相对文件路径（用于API返回）
      */
     private String getRelativeFilePath(String absolutePath) {
-        String uploadDir = storageConfig.getUploadDir();
-        if (absolutePath.startsWith(uploadDir)) {
-            return absolutePath.substring(uploadDir.length()).replace("\\", "/").replaceAll("^/", "");
+        Path storageRoot = getStorageRoot();
+        Path storedPath = Paths.get(absolutePath).toAbsolutePath().normalize();
+        if (storedPath.startsWith(storageRoot)) {
+            return storageRoot.relativize(storedPath).toString().replace("\\", "/");
         }
-        return absolutePath;
+        throw new InvalidStoragePathException("存储结果不在配置的存储目录中");
     }
 
     /**
-     * 根据相对路径获取绝对路径
+     * 将不可信的相对路径安全解析到存储根目录。
+     *
+     * <p>除了词法规范化，还会检查已存在的路径及其最近的已存在父目录的
+     * 真实路径，从而阻止通过符号链接逃逸。</p>
      */
-    public String getAbsolutePath(String relativePath) {
-        return Paths.get(storageConfig.getUploadDir(), relativePath).toString();
+    public Path resolveStoredFile(String relativePath) {
+        if (relativePath == null
+                || relativePath.isBlank()
+                || relativePath.indexOf('\0') >= 0
+                || relativePath.indexOf('\r') >= 0
+                || relativePath.indexOf('\n') >= 0) {
+            throw new InvalidStoragePathException("文件路径不能为空");
+        }
+        if (relativePath.indexOf('\\') >= 0
+                || relativePath.startsWith("//")
+                || relativePath.matches("^[A-Za-z]:[/\\\\].*")) {
+            throw new InvalidStoragePathException("不允许绝对路径或非标准路径分隔符");
+        }
+
+        final Path requested;
+        try {
+            requested = Paths.get(relativePath);
+        } catch (InvalidPathException e) {
+            throw new InvalidStoragePathException("文件路径格式无效", e);
+        }
+        if (requested.isAbsolute()) {
+            throw new InvalidStoragePathException("不允许绝对文件路径");
+        }
+        for (Path segment : requested) {
+            if ("..".equals(segment.toString())) {
+                throw new InvalidStoragePathException("文件路径不得包含上级目录跳转");
+            }
+        }
+
+        Path storageRoot = getStorageRoot();
+        Path candidate = storageRoot.resolve(requested).normalize();
+        if (!candidate.startsWith(storageRoot)) {
+            throw new InvalidStoragePathException("文件路径超出配置的存储目录");
+        }
+
+        return resolveCanonicalContainedPath(storageRoot, candidate);
+    }
+
+    private Path getStorageRoot() {
+        return Paths.get(storageConfig.getUploadDir()).toAbsolutePath().normalize();
+    }
+
+    private Path resolveCanonicalContainedPath(Path storageRoot, Path candidate) {
+        try {
+            if (!Files.exists(storageRoot, LinkOption.NOFOLLOW_LINKS)) {
+                return candidate;
+            }
+            Path realRoot = storageRoot.toRealPath();
+            Path existing = candidate;
+            while (existing != null && !Files.exists(existing, LinkOption.NOFOLLOW_LINKS)) {
+                existing = existing.getParent();
+            }
+            if (existing == null) {
+                throw new InvalidStoragePathException("文件路径通过符号链接超出配置的存储目录");
+            }
+            Path realExisting = existing.toRealPath();
+            if (!realExisting.startsWith(realRoot)) {
+                throw new InvalidStoragePathException("文件路径通过符号链接超出配置的存储目录");
+            }
+            // Existing files are served through their checked canonical path rather
+            // than re-traversing a caller-controlled symlink after validation.
+            return Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)
+                    ? realExisting
+                    : candidate;
+        } catch (InvalidStoragePathException e) {
+            throw e;
+        } catch (IOException e) {
+            throw new InvalidStoragePathException("无法验证文件存储路径", e);
+        }
     }
 }

@@ -7,5 +7,5 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 @EnableWebMvc
 public class WebConfig implements WebMvcConfigurer {
-    // 移除了CORS配置，统一使用CustomCorsFilter
+    // MVC extension point retained for legacy compatibility. CORS is configured by CorsConfig.
 }

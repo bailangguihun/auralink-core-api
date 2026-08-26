@@ -1,0 +1,2 @@
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.auralink.ops.round51.Round51MaintenanceEnvironmentPostProcessor

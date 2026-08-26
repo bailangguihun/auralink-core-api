@@ -63,7 +63,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public ApiResponse<Void> handleException(Exception ex) {
-        log.error("服务器内部错误: ", ex);
-        return ApiResponse.error("服务器内部错误: " + ex.getMessage());
+        log.error("服务器内部错误: type={}", ex.getClass().getSimpleName());
+        return ApiResponse.error("服务器内部错误");
     }
 }
