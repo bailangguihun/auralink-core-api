@@ -1,7 +1,5 @@
 package com.auralink.controller;
 
-import java.util.List;
-
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -13,6 +11,8 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.auralink.dto.ApiResponse;
+import com.auralink.dto.response.GenerationLogResponse;
+import com.auralink.dto.response.UserProfileResponse;
 import com.auralink.entity.GenerationLog;
 import com.auralink.entity.User;
 import com.auralink.repository.GenerationLogRepository;
@@ -29,7 +29,7 @@ public class UserController {
     private final GenerationLogRepository generationLogRepository;
 
     @GetMapping("/logs")
-    public ResponseEntity<ApiResponse<Page<GenerationLog>>> getLogs(
+    public ResponseEntity<ApiResponse<Page<GenerationLogResponse>>> getLogs(
             Authentication authentication,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "10") int size,
@@ -46,16 +46,15 @@ public class UserController {
             logs = generationLogRepository.findByUserOrderByCreatedAtDesc(user, pageable);
         }
 
-        return ResponseEntity.ok(ApiResponse.success(logs));
+        Page<GenerationLogResponse> response = logs.map(GenerationLogResponse::from);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 
     @GetMapping("/profile")
-    public ResponseEntity<ApiResponse<User>> getProfile(Authentication authentication) {
+    public ResponseEntity<ApiResponse<UserProfileResponse>> getProfile(Authentication authentication) {
         User user = (User) authentication.getPrincipal();
 
-        // 移除敏感信息
-        user.setPassword(null);
-
-        return ResponseEntity.ok(ApiResponse.success(user));
+        return ResponseEntity.ok(ApiResponse.success(UserProfileResponse.from(user)));
     }
 }

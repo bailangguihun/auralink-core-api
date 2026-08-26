@@ -4,52 +4,172 @@ server:
     context-path: /
 
 spring:
+  config:
+    import: "optional:file:${AURALINK_ENV_FILE:./.env}[.properties]"
   application:
     name: auralink-backend
   main:
     allow-bean-definition-overriding: true
   datasource:
-    url: ${DATABASE_URL:jdbc:sqlite:./data/auralink.db}
+    url: "${AURALINK_DATABASE_URL:jdbc:sqlite:./auralink.db}"
     driver-class-name: org.sqlite.JDBC
+    hikari:
+      connection-init-sql: "PRAGMA foreign_keys=ON"
   jpa:
     database-platform: org.hibernate.community.dialect.SQLiteDialect
     hibernate:
-      ddl-auto: update
+      ddl-auto: ${AURALINK_JPA_DDL_AUTO:none}
     show-sql: false
     properties:
       hibernate:
         format_sql: true
         jdbc:
           time_zone: UTC
+  flyway:
+    enabled: ${AURALINK_FLYWAY_ENABLED:false}
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    baseline-version: "1"
+    baseline-description: "Inherited legacy schema baseline"
+    validate-on-migrate: true
+    validate-migration-naming: true
+    clean-disabled: true
+    init-sqls:
+      - "PRAGMA foreign_keys=ON"
   servlet:
     multipart:
       max-file-size: 10MB
       max-request-size: 20MB
       resolve-lazily: true
-  web:
-    cors:
-      allowed-origins: "*"
-      allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD
-      allowed-headers: "*"
-      allow-credentials: false
-      max-age: 3600
   mvc:
     async:
       request-timeout: 120000
 
 auralink:
   jwt:
-    secret: ${JWT_SECRET}
-    expiration: 604800000
+    secret: ${AURALINK_JWT_SECRET}
+    expiration: ${AURALINK_JWT_EXPIRATION_MS:604800000}
   service:
-    vmm-url: ${VMM_URL:http://localhost:5001}
-    nonvmm-url: ${VISION_URL:http://localhost:5002}
+    vmm-url: "${AURALINK_VMM_URL:http://localhost:5001}"
+    nonvmm-url: "${AURALINK_QWEN_SERVICE_URL:http://localhost:5002}"
   storage:
-    upload-dir: ${UPLOAD_DIR:./data/uploads}
-    audio-dir: ${AUDIO_DIR:./data/audio}
+    upload-dir: "${AURALINK_UPLOAD_DIR:./temp_uploads}"
+    audio-dir: "${AURALINK_AUDIO_DIR:../VMM-frontend/project/public/audios}"
+    legacy-frontend-audio-dir: "${AURALINK_LEGACY_FRONTEND_AUDIO_DIR:../frontend/public/audios}"
+  media-assets:
+    managed-dir: "${AURALINK_MEDIA_ASSET_DIR:./temp_uploads/media-assets}"
+    # Keep the public upload ceiling aligned with the inherited 10 MiB multipart limit.
+    max-upload-bytes: ${AURALINK_MEDIA_ASSET_MAX_UPLOAD_BYTES:10485760}
+    max-generated-bytes: ${AURALINK_MEDIA_ASSET_MAX_GENERATED_BYTES:268435456}
+    max-image-pixels: ${AURALINK_MEDIA_ASSET_MAX_IMAGE_PIXELS:40000000}
+    public-cache-seconds: ${AURALINK_MEDIA_ASSET_PUBLIC_CACHE_SECONDS:86400}
   paintings:
-    metadata-csv-path: ${PAINTINGS_CSV_PATH:./data/paintings.csv}
-    picture-dir: ${PICTURE_DIR:./data/picture}
-    image-base-url: ${IMAGE_BASE_URL:https://api.auralinks.top/api/paintings/images}
+    metadata-csv-path: "${AURALINK_PAINTING_CSV_PATH:../frontend/public/data/paintings.csv}"
+    picture-dir: "${AURALINK_PAINTING_PICTURE_DIR:./picture}"
+    image-base-url: "${AURALINK_PAINTING_IMAGE_BASE_URL:https://api.auralinks.top/api/paintings/images}"
     default-limit: 500
     max-limit: 2000
+    import-enabled: ${AURALINK_PAINTING_CATALOG_IMPORT_ENABLED:false}
+    import-fail-on-error: ${AURALINK_PAINTING_CATALOG_IMPORT_FAIL_ON_ERROR:true}
+    import-batch-size: ${AURALINK_PAINTING_CATALOG_IMPORT_BATCH_SIZE:100}
+    daily-zone: "${AURALINK_PAINTING_DAILY_ZONE:Asia/Shanghai}"
+  guide:
+    enabled: ${AURALINK_GUIDE_ENABLED:false}
+    service-url: "${GUIDE_AI_SERVICE_URL:}"
+    connect-timeout: "${AURALINK_GUIDE_CONNECT_TIMEOUT_MS:5000}ms"
+    read-timeout: "${AURALINK_GUIDE_READ_TIMEOUT_MS:120000}ms"
+    total-timeout: "${AURALINK_GUIDE_TOTAL_TIMEOUT_MS:250000}ms"
+    internal-read-timeout: "${AURALINK_GUIDE_INTERNAL_READ_TIMEOUT_MS:380000}ms"
+    retry-backoff: "${AURALINK_GUIDE_RETRY_BACKOFF_MS:200}ms"
+    max-concurrent-generations: ${AURALINK_GUIDE_MAX_CONCURRENT_GENERATIONS:2}
+    user-generation-limit: ${AURALINK_GUIDE_USER_GENERATION_LIMIT:3}
+    user-generation-window: "${AURALINK_GUIDE_USER_GENERATION_WINDOW_SECONDS:600}s"
+    global-generation-limit: ${AURALINK_GUIDE_GLOBAL_GENERATION_LIMIT:30}
+    global-generation-window: "${AURALINK_GUIDE_GLOBAL_GENERATION_WINDOW_SECONDS:3600}s"
+    schema-version: "${AURALINK_GUIDE_SCHEMA_VERSION:1}"
+    max-knowledge-items: ${AURALINK_GUIDE_MAX_KNOWLEDGE_ITEMS:5}
+    max-knowledge-chars: ${AURALINK_GUIDE_MAX_KNOWLEDGE_CHARS:8000}
+    poetry-graph-path: "${AURALINK_GUIDE_POETRY_GRAPH_PATH:../frontend/public/data/poetry-graph.json}"
+    poetry-stats-path: "${AURALINK_GUIDE_POETRY_STATS_PATH:../frontend/public/data/poetry-stats.json}"
+    internal-token: "${AURALINK_GUIDE_INTERNAL_TOKEN:}"
+    service-host: "${AURALINK_GUIDE_SERVICE_HOST:127.0.0.1}"
+    service-port: ${AURALINK_GUIDE_SERVICE_PORT:5003}
+  workflows:
+    enabled: ${AURALINK_WORKFLOWS_ENABLED:false}
+    schema-version: ${AURALINK_WORKFLOW_SCHEMA_VERSION:1}
+    max-graph-bytes: ${AURALINK_WORKFLOW_MAX_GRAPH_BYTES:65536}
+    max-nodes: ${AURALINK_WORKFLOW_MAX_NODES:16}
+    max-edges: ${AURALINK_WORKFLOW_MAX_EDGES:15}
+    max-name-chars: ${AURALINK_WORKFLOW_MAX_NAME_CHARS:120}
+    max-description-chars: ${AURALINK_WORKFLOW_MAX_DESCRIPTION_CHARS:2000}
+  creations:
+    # Production-safe default. ROUND 9B.2 activates its bounded worker only when true.
+    enabled: ${AURALINK_CREATIONS_ENABLED:false}
+    worker-count: ${AURALINK_CREATIONS_WORKER_COUNT:1}
+    queue-capacity: ${AURALINK_CREATIONS_QUEUE_CAPACITY:16}
+    executor-queue-capacity: ${AURALINK_CREATIONS_EXECUTOR_QUEUE_CAPACITY:1}
+    lease-duration: "${AURALINK_CREATIONS_LEASE_DURATION_SECONDS:900}s"
+    heartbeat-interval: "${AURALINK_CREATIONS_HEARTBEAT_INTERVAL_SECONDS:30}s"
+    recovery-grace: "${AURALINK_CREATIONS_RECOVERY_GRACE_SECONDS:90}s"
+    recovery-interval: "${AURALINK_CREATIONS_RECOVERY_INTERVAL_SECONDS:60}s"
+    recovery-batch-size: ${AURALINK_CREATIONS_RECOVERY_BATCH_SIZE:50}
+    startup-max-batches: ${AURALINK_CREATIONS_STARTUP_MAX_BATCHES:20}
+    recovery-fence-lease: "${AURALINK_CREATIONS_RECOVERY_FENCE_LEASE_SECONDS:300}s"
+    # @Scheduled consumes this raw value as milliseconds; the typed properties binding does too.
+    dispatch-delay: ${AURALINK_CREATIONS_DISPATCH_DELAY_MS:1000}
+    shutdown-await: "${AURALINK_CREATIONS_SHUTDOWN_AWAIT_SECONDS:30}s"
+    default-page-size: ${AURALINK_CREATIONS_DEFAULT_PAGE_SIZE:20}
+    max-page-size: ${AURALINK_CREATIONS_MAX_PAGE_SIZE:100}
+  creation-providers:
+    enabled: ${AURALINK_CREATION_PROVIDERS_ENABLED:false}
+    staging-dir: "${AURALINK_PROVIDER_STAGING_DIR:/tmp/auralink-provider-staging}"
+    max-image-input-bytes: ${AURALINK_PROVIDER_MAX_IMAGE_INPUT_BYTES:10485760}
+    max-image-output-bytes: ${AURALINK_PROVIDER_MAX_IMAGE_OUTPUT_BYTES:26214400}
+    max-audio-output-bytes: ${AURALINK_PROVIDER_MAX_AUDIO_OUTPUT_BYTES:268435456}
+    max-text-chars: ${AURALINK_PROVIDER_MAX_TEXT_CHARS:20000}
+    connect-timeout: "${AURALINK_PROVIDER_CONNECT_TIMEOUT_MS:5000}ms"
+    qwen-read-timeout: "${AURALINK_PROVIDER_QWEN_READ_TIMEOUT_MS:180000}ms"
+    seedream-read-timeout: "${AURALINK_PROVIDER_SEEDREAM_READ_TIMEOUT_MS:300000}ms"
+    vmm-read-timeout: "${AURALINK_PROVIDER_VMM_READ_TIMEOUT_MS:600000}ms"
+    max-concurrent-seedream: ${AURALINK_PROVIDER_MAX_CONCURRENT_SEEDREAM:2}
+    max-concurrent-qwen: ${AURALINK_PROVIDER_MAX_CONCURRENT_QWEN:4}
+    max-concurrent-vmm: ${AURALINK_PROVIDER_MAX_CONCURRENT_VMM:1}
+    seedream-default-size: "${AURALINK_SEEDREAM_DEFAULT_SIZE:2K}"
+    seedream-output-format: "${AURALINK_SEEDREAM_OUTPUT_FORMAT:png}"
+    seedream-watermark: ${AURALINK_SEEDREAM_WATERMARK:true}
+  cors:
+    # Exact origins and subdomain patterns retained from the active legacy filter.
+    allowed-origins: "${AURALINK_CORS_ALLOWED_ORIGINS:https://fanhualy.top,http://fanhualy.top,https://api.fanhualy.top,http://api.fanhualy.top,http://localhost:3000,https://localhost:3000,https://*.fanhualy.top,http://*.fanhualy.top}"
+    allowed-methods: GET,POST,PUT,PATCH,DELETE,OPTIONS,HEAD
+    allowed-headers: Origin,Content-Type,Accept,Authorization,X-Requested-With,Cache-Control,Range,If-None-Match,If-Modified-Since,If-Range
+    exposed-headers: Authorization,Content-Disposition,Content-Type,Content-Length,Accept-Ranges,Content-Range,ETag,Cache-Control,Last-Modified
+    allow-credentials: ${AURALINK_CORS_ALLOW_CREDENTIALS:true}
+    max-age-seconds: 3600
+  http-client:
+    connect-timeout: "${AURALINK_HTTP_CONNECT_TIMEOUT_MS:15000}ms"
+    read-timeout: "${AURALINK_HTTP_READ_TIMEOUT_MS:120000}ms"
+  remote-fetch:
+    max-bytes: ${AURALINK_REMOTE_FETCH_MAX_BYTES:26214400}
+    connect-timeout: "${AURALINK_REMOTE_FETCH_CONNECT_TIMEOUT_MS:5000}ms"
+    read-timeout: "${AURALINK_REMOTE_FETCH_READ_TIMEOUT_MS:30000}ms"
+    total-timeout: "${AURALINK_REMOTE_FETCH_TOTAL_TIMEOUT_MS:120000}ms"
+    max-redirects: ${AURALINK_REMOTE_FETCH_MAX_REDIRECTS:3}
+  providers:
+    seedream:
+      api-key: "${SEEDREAM_API_KEY:}"
+      base-url: "${SEEDREAM_BASE_URL:}"
+      model: "${SEEDREAM_MODEL:}"
+    qwen:
+      api-key: "${QWEN_API_KEY:}"
+      base-url: "${QWEN_BASE_URL:}"
+      model: "${QWEN_MODEL:qwen3-vl-plus}"
+    painting-music:
+      base-url: "${PAINTING_MUSIC_SERVICE_URL:}"
+      output-root: "${AURALINK_VMM_OUTPUT_DIR:}"
+    guide:
+      base-url: "${GUIDE_AI_SERVICE_URL:}"
+    video:
+      api-key: "${VIDEO_GENERATION_API_KEY:}"
+      base-url: "${VIDEO_GENERATION_BASE_URL:}"
+      model: "${VIDEO_GENERATION_MODEL:}"
+      enabled: false

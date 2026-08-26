@@ -37,7 +37,3 @@ temp_uploads/
 logs/
 application-dev.yml
 application-prod.yml
-# Auralink painting metadata exception
-!data/
-data/*
-!data/paintings.csv

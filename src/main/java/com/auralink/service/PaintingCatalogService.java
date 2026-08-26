@@ -22,7 +22,7 @@ import org.apache.commons.csv.CSVRecord;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-import com.auralink.config.AppConfig.PaintingConfig;
+import com.auralink.config.properties.PaintingProperties;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +32,7 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class PaintingCatalogService {
 
-    private final PaintingConfig paintingConfig;
+    private final PaintingProperties paintingConfig;
     private final AtomicBoolean loaded = new AtomicBoolean(false);
 
     private volatile List<PaintingEntry> cachedEntries = List.of();
@@ -116,7 +116,7 @@ public class PaintingCatalogService {
         Path pictureDir = getPictureDirPath();
 
         if (!Files.isRegularFile(csvPath)) {
-            throw new IllegalStateException("Paintings metadata CSV not found: " + csvPath.toAbsolutePath());
+            throw new IllegalStateException("Painting catalog metadata is unavailable");
         }
 
         List<PaintingEntry> entries = new ArrayList<>();

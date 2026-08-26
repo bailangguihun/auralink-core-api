@@ -1,11 +1,12 @@
 package com.auralink.controller;
 
 import java.io.IOException;
-import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -21,14 +22,15 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+import org.springframework.web.util.UriUtils;
 
-import com.auralink.config.AppConfig.ServiceConfig;
-import com.auralink.config.AppConfig.StorageConfig;
+import com.auralink.config.properties.StorageProperties;
 import com.auralink.dto.ApiResponse;
 import com.auralink.dto.GenerateMusicRequest;
 import com.auralink.dto.ImageDescriptionRequest;
 import com.auralink.dto.RecordApiUsageRequest;
 import com.auralink.dto.UploadResultRequest;
+import com.auralink.exception.InvalidStoragePathException;
 import com.auralink.service.GenerationService;
 import com.auralink.service.StorageService;
 import com.auralink.service.UploadSessionService;
@@ -44,11 +46,13 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class ApiController {
 
+    private static final Pattern DANGEROUS_ENCODED_PATH = Pattern.compile(
+            "(?i)%(?:25|2e|2f|5c|00|0d|0a)");
+
     private final StorageService storageService;
     private final GenerationService generationService;
     private final UploadSessionService uploadSessionService;
-    private final ServiceConfig serviceConfig;
-    private final StorageConfig storageConfig;
+    private final StorageProperties storageConfig;
 
     @PostMapping("/upload-image")
     public ResponseEntity<ApiResponse<Map<String, Object>>> uploadImage(
@@ -66,15 +70,18 @@ public class ApiController {
             }
 
             Map<String, Object> result = new HashMap<>();
-            result.put("filepath", filepath);
+            // Legacy creation models forward filepath directly to the Python image service.
+            // Keep that contract usable without disclosing a server-local absolute path.
+            result.put("filepath", imageUrl);
             result.put("relativePath", relativePath);
-            result.put("absolutePath", filepath);
+            // Retain the legacy field name without disclosing a server-local path.
+            result.put("absolutePath", relativePath);
             result.put("imageUrl", imageUrl);
 
             return ResponseEntity.ok(ApiResponse.success("文件上传成功", result));
         } catch (IOException e) {
-            log.error("文件上传失败: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(ApiResponse.error("文件上传失败: " + e.getMessage()));
+            log.error("文件上传失败: type={}", e.getClass().getSimpleName());
+            return ResponseEntity.badRequest().body(ApiResponse.error("文件上传失败"));
         }
     }
 
@@ -94,14 +101,15 @@ public class ApiController {
             Map<String, Object> result = new HashMap<>();
             result.put("sessionId", sessionId.trim());
             result.put("filepath", relativePath);
-            result.put("absolutePath", filepath);
+            // Retain the legacy field name without disclosing a server-local path.
+            result.put("absolutePath", relativePath);
             result.put("imageUrl", buildFileUrl(relativePath));
             result.put("status", "uploaded");
 
             return ResponseEntity.ok(ApiResponse.success("上传成功", result));
         } catch (IOException e) {
-            log.error("会话上传失败: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(ApiResponse.error("会话上传失败: " + e.getMessage()));
+            log.error("会话上传失败: type={}", e.getClass().getSimpleName());
+            return ResponseEntity.badRequest().body(ApiResponse.error("会话上传失败"));
         }
     }
 
@@ -154,8 +162,8 @@ public class ApiController {
             storageService.cleanupOldFiles();
             return ResponseEntity.ok(ApiResponse.success("清理完成", null));
         } catch (Exception e) {
-            log.error("清理临时文件时出错: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(ApiResponse.error("清理临时文件时出错: " + e.getMessage()));
+            log.error("清理临时文件时出错: type={}", e.getClass().getSimpleName());
+            return ResponseEntity.badRequest().body(ApiResponse.error("清理临时文件时出错"));
         }
     }
 
@@ -185,12 +193,8 @@ public class ApiController {
     public ResponseEntity<Resource> serveFile(HttpServletRequest request) {
         try {
             // 获取完整的文件路径（去掉 /api/files/ 前缀）
-            String requestPath = request.getRequestURI();
-            String relativePath = requestPath.substring(requestPath.indexOf("/files/") + 7);
-
-            // 获取绝对路径
-            String absolutePath = storageService.getAbsolutePath(relativePath);
-            Path filePath = Paths.get(absolutePath);
+            String relativePath = extractAndDecodeFilePath(request.getRequestURI());
+            Path filePath = storageService.resolveStoredFile(relativePath);
             Resource resource = new UrlResource(filePath.toUri());
 
             if (resource.exists() && resource.isReadable()) {
@@ -205,6 +209,9 @@ public class ApiController {
                 log.error("无法读取文件: {}", relativePath);
                 return ResponseEntity.notFound().build();
             }
+        } catch (InvalidStoragePathException | IllegalArgumentException e) {
+            log.warn("拒绝不安全的文件路径请求");
+            return ResponseEntity.badRequest().build();
         } catch (Exception e) {
             log.error("获取文件时出错: {}", e.getMessage());
             return ResponseEntity.badRequest().build();
@@ -275,8 +282,8 @@ public class ApiController {
             Map<String, Object> result = generationService.recordApiUsage(request);
             return ResponseEntity.ok(ApiResponse.success("API使用记录保存成功", result));
         } catch (Exception e) {
-            log.error("记录API使用情况时出错: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(ApiResponse.error("记录API使用情况时出错: " + e.getMessage()));
+            log.error("记录API使用情况时出错: type={}", e.getClass().getSimpleName());
+            return ResponseEntity.badRequest().body(ApiResponse.error("记录API使用情况时出错"));
         }
     }
 
@@ -294,8 +301,8 @@ public class ApiController {
             Map<String, Object> result = generationService.uploadResult(request);
             return ResponseEntity.ok(ApiResponse.success("结果上传成功", result));
         } catch (Exception e) {
-            log.error("上传结果时出错: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(ApiResponse.error("上传结果时出错: " + e.getMessage()));
+            log.error("上传结果失败: type={}", e.getClass().getSimpleName());
+            return ResponseEntity.badRequest().body(ApiResponse.error("上传结果失败"));
         }
     }
 
@@ -313,5 +320,22 @@ public class ApiController {
                 .path("/api/files/")
                 .path(relativePath)
                 .toUriString();
+    }
+
+    private String extractAndDecodeFilePath(String requestUri) {
+        int marker = requestUri.indexOf("/files/");
+        if (marker < 0) {
+            throw new InvalidStoragePathException("文件路径格式无效");
+        }
+        String encodedPath = requestUri.substring(marker + 7);
+        // Reject separator/dot double encoding before a single controlled decode.
+        if (DANGEROUS_ENCODED_PATH.matcher(encodedPath).find()) {
+            throw new InvalidStoragePathException("编码的文件路径不允许访问");
+        }
+        try {
+            return UriUtils.decode(encodedPath, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw new InvalidStoragePathException("文件路径编码无效", e);
+        }
     }
 }
