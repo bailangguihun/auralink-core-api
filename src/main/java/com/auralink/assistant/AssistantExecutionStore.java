@@ -126,6 +126,12 @@ public final class AssistantExecutionStore {
  public Run savePreparation(long owner,UUID id,long fence,String worker,Map<String,Object> context,List<Citation> citations,Map<String,Object> retrieval){return tx(()->{
   Run r=executing(owner,id,fence,worker);jdbc.update("UPDATE assistant_runs SET context_manifest=?::jsonb,retrieval=?::jsonb,updated_at=? WHERE id=?",boundedJson(context,65536),boundedJson(retrieval,65536),now(),id);saveCitations(r,citations);append(raw(id),"retrieval.status",Map.of("retrieval",retrieval));for(Citation citation:citations)append(raw(id),"citation",Map.of("citation",citation));return raw(id);
  });}
+ /** Only publish answer citations after a valid model-stream event. The same lifecycle/fence
+  * guard as checkpoints prevents cancellation/deletion from exposing late source content. */
+ public Run confirmModelSources(long owner,UUID id,long fence,String worker,List<Citation> citations){return tx(()->{
+  Run r=executing(owner,id,fence,worker);if(r.dispatchedAt()==null)throw AssistantFailure.conflict("Model dispatch intent is required");
+  saveCitations(r,citations);for(Citation citation:citations)append(raw(id),"citation",Map.of("citation",citation));return raw(id);
+ });}
  private Run append(Run r,String type,Map<String,Object> data){if(!List.of("run.accepted","retrieval.status","citation","message.delta","message.snapshot","choice","usage","run.state").contains(type))throw AssistantFailure.invalid("Invalid stream event");long seq=r.sequence()+1;var payload=new LinkedHashMap<String,Object>(data);payload.put("contractVersion",1);payload.put("runId",r.id().toString());payload.put("branchId",r.branchId().toString());payload.put("sequence",seq);
   jdbc.update("INSERT INTO assistant_run_events(session_id,run_id,sequence,event_type,payload,created_at) VALUES(?,?,?,?,?::jsonb,?)",r.sessionId(),r.id(),seq,type,boundedJson(payload,262144),now());jdbc.update("UPDATE assistant_runs SET sequence=?,updated_at=? WHERE id=?",seq,now(),r.id());jdbc.update("DELETE FROM assistant_run_events WHERE run_id=? AND sequence<=?",r.id(),seq-maxEvents);return raw(r.id());
  }

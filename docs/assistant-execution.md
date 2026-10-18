@@ -96,6 +96,15 @@ SHA-256、尺寸及变换版本。最多 4 张、派生图合计 8,000,000 bytes
 查询旧游标超出保留窗口时返回 `message.snapshot`（已有 checkpoint 和当前序号），
 不能通过重连重新调度。显式 done 才能完成上游；EOF 不作成功。
 
+AI→Core 私有流的 `heartbeat {kind:"provider_activity"}` 只表示实际观察到有效的
+非答案 provider delta；AI 按 `min(1000ms, idleMs/3)` 限速，不因注释、空 delta
+或无数据而定时伪造。Core 严格校验该对象，只刷新传输空闲时间，不调用业务回调、
+不持久化正文/来源、不广播给浏览器，也不算完成。总执行时限、取消与无终态 EOF
+拒绝成功的规则不变。此事件需匹配的新 Core/AI 私有协议一起发布，不能假定旧 Core
+支持。新 Core 仍接受旧 AI 原事件集；反向的新 AI 若先发 heartbeat 给旧 Core 会被协议
+拒绝。后续协调发布必须保证配对后才放行生成，不能直接沿用 AI 先更新且立即继续生成
+的顺序；这里记录兼容边界，不代表执行或批准新的发布操作。
+
 客户端订阅用 Servlet async/nonblocking WriteListener。最多 32 个硬上限，配置默认
 8；两个专属 daemon poller；每次只取一个 event，最多缓存一条 1MiB 帧，
 不建立无界输出队列。每订阅 2MiB/默认 25 秒后关闭，客户端按 cursor 再连；

@@ -45,7 +45,7 @@ public final class AssistantExecutionService implements AutoCloseable {
   if(c==null||c.branchId()==null||c.expectedVersion()<0||c.text()==null||c.text().length()>32000||(c.text().isBlank()&&(c.attachmentIds()==null||c.attachmentIds().isEmpty())))throw AssistantFailure.invalid("A branch, version and bounded message are required");
   if(c.attachmentIds()!=null&&c.attachmentIds().stream().anyMatch(Objects::isNull)||c.artworkRefs()!=null&&c.artworkRefs().stream().anyMatch(Objects::isNull))throw AssistantFailure.invalid("Null attachment or artwork references are invalid");
   List<UUID> files=c.attachmentIds()==null?List.of():List.copyOf(c.attachmentIds());List<ArtworkRef> refs=c.artworkRefs()==null?List.of():List.copyOf(c.artworkRefs());
-  if(files.size()>4||refs.size()>5||new HashSet<>(files).size()!=files.size())throw AssistantFailure.invalid("Image/artwork input limit exceeded");
+  if(files.size()>4||refs.size()>5||new HashSet<>(files).size()!=files.size()||refs.stream().map(ArtworkRef::artworkId).distinct().count()!=refs.size())throw AssistantFailure.invalid("Image/artwork input limit exceeded");
   Map<String,Boolean> retrieval=c.retrieval()==null?Map.of():c.retrieval();if(!Set.of("artworks","ragflow").containsAll(retrieval.keySet()))throw AssistantFailure.invalid("Unknown retrieval source");
   for(var ref:refs)if(ref.artworkId()==null||ref.expectedBatchId()==null||ref.expectedRevision()<1)throw AssistantFailure.invalid("Artwork identity and revision are required");
   if(!refs.isEmpty()&&!Boolean.TRUE.equals(retrieval.get("artworks")))throw AssistantFailure.invalid("Artwork references require explicit platform retrieval");
@@ -57,7 +57,7 @@ public final class AssistantExecutionService implements AutoCloseable {
   for(UUID id:c.attachmentIds()){var a=attachments.metadata(owner,id);if(!a.sessionId().equals(c.sessionId()))throw AssistantFailure.notFound();}
   // Existing branch images are included in capability checks; changing model never silently drops them.
   for(var m:foundation.history(owner,c.sessionId(),c.branchId(),false,p.getMaxContextMessages()))if(eligibleContextMessage(m,null))images+=m.attachmentIds().size();
-  for(var ref:refs(c.options())){var artwork=artwork(ref);if(ref.includeImage())images++;}
+  selectedArtworks(refs(c.options()));for(var ref:refs(c.options()))if(ref.includeImage())images++;
   if(images>4)throw new AssistantFailure(422,"ASSISTANT_IMAGE_LIMIT","The selected context exceeds four images");
   if(images>0&&!Boolean.TRUE.equals(map(selected.get("capabilities")).get("images")))throw new AssistantFailure(422,"ASSISTANT_IMAGES_UNSUPPORTED","The selected model does not accept images");
  }
@@ -93,19 +93,25 @@ public final class AssistantExecutionService implements AutoCloseable {
   }catch(RuntimeException ignored){/* Database outage stops dispatch. Durable leases recover after connectivity returns. */}
  }
  private void execute(long owner,Run claimed){
-  AtomicReference<Run> run=new AtomicReference<>(claimed);AtomicReference<String> text=new AtomicReference<>("");AtomicBoolean terminal=new AtomicBoolean();AtomicReference<Map<String,Object>> usage=new AtomicReference<>(Map.of("available",false));AtomicReference<List<ChoiceCard>> choices=new AtomicReference<>(List.of());List<Citation> citations=new ArrayList<>();
+  AtomicReference<Run> run=new AtomicReference<>(claimed);AtomicReference<String> text=new AtomicReference<>("");AtomicBoolean terminal=new AtomicBoolean();AtomicReference<Map<String,Object>> usage=new AtomicReference<>(Map.of("available",false));AtomicReference<List<ChoiceCard>> choices=new AtomicReference<>(List.of());List<Citation> citations=new ArrayList<>();AtomicBoolean sourcesObserved=new AtomicBoolean();
   var heartbeat=scheduler.scheduleWithFixedDelay(()->{try{store.heartbeat(owner,claimed.id(),claimed.fence(),worker,p.getLease());}catch(RuntimeException revoked){ai.closeStream(claimed.id());}},Math.max(100,p.getLease().toMillis()/3),Math.max(100,p.getLease().toMillis()/3),TimeUnit.MILLISECONDS);
   try{
    requireGeneration();
    if(!p.getExpectedConfigSha256().equals(claimed.options().get("configSha256")))throw new AssistantFailure(409,"ASSISTANT_CONFIG_CHANGED","Saved configuration is no longer available");
-   var selected=claimed.kind().equals("RETRIEVAL")?Map.<String,Object>of():model(claimed.modelId());var context=buildContext(owner,claimed,selected);Map<String,Object> retrieval=new LinkedHashMap<>();Map<String,Object> requested=map(claimed.options().get("retrieval"));
+   var selected=claimed.kind().equals("RETRIEVAL")?Map.<String,Object>of():model(claimed.modelId());var preparation=new AssistantArtworkDeadline();var context=buildContext(owner,claimed,selected,preparation);Map<String,Object> retrieval=new LinkedHashMap<>();Map<String,Object> requested=map(claimed.options().get("retrieval"));
    boolean platform=Boolean.TRUE.equals(requested.get("artworks"))&&!claimed.kind().equals("SUMMARY");boolean rag=Boolean.TRUE.equals(requested.get("ragflow"))&&!claimed.kind().equals("SUMMARY");
    retrieval.put("artworks",platform?"EMPTY":"DISABLED");retrieval.put("ragflow",rag?"NOT_CONFIGURED":"DISABLED");
    if(platform){
-    try{List<AssistantArtworkRead.Artwork> found=new ArrayList<>();var references=refs(claimed.options());if(references.isEmpty()){if(artworks==null)throw unavailable();found.addAll(artworks.search(context.query().substring(0,Math.min(200,context.query().length())),List.of(),5));}else for(var ref:references)found.add(artwork(ref));
-     for(var art:found){String excerpt=json.writeValueAsString(art.fields());UUID id=UUID.randomUUID();var provenance=Map.<String,Object>of("artworkId",art.artworkId().toString(),"batchId",art.batchId().toString(),"revision",art.revision(),"projectionVersion",art.projectionVersion(),"sourceRecordId",art.sourceRecordId(),"recordNumber",art.recordNumber(),"retrievedAt",clock.instant().toString(),"detailUrl","/gallery/"+art.artworkId());citations.add(new Citation(id,citations.size()+1,"PLATFORM_ARTWORK",art.artworkId().toString(),art.batchId()+":"+art.revision(),art.projectionVersion(),provenance,excerpt,digest(excerpt)));}
+    try{
+     var references=refs(claimed.options());var found=selectedArtworks(references,preparation);
+     var bounded=new AssistantArtworkContext(json);
+     for(int i=0;i<found.size();i++)citations.add(bounded.snapshot(found.get(i),i+1,references.get(i).includeImage(),clock.instant()));
      retrieval.put("artworks",found.isEmpty()?"EMPTY":"AVAILABLE");
-    }catch(AssistantFailure e){if(e.code().equals("ASSISTANT_ARTWORK_REVISION_CHANGED")||e.status()==404)throw e;retrieval.put("artworks","UNAVAILABLE");}catch(org.springframework.dao.DataAccessException e){retrieval.put("artworks","UNAVAILABLE");}
+    }catch(AssistantFailure e){
+     retrieval.put("artworks",e.status()==504?"TIMEOUT":"UNAVAILABLE");
+     run.set(store.savePreparation(owner,claimed.id(),claimed.fence(),worker,context.manifest(),List.of(),retrieval));
+     throw e; // Explicit selected-source failure never silently falls back to a charged general answer.
+    }
    }
    if(rag){
     requireGeneration();
@@ -116,24 +122,29 @@ public final class AssistantExecutionService implements AutoCloseable {
    }
    // Revalidate the currently public projection and owned attachment lifecycle
    // after potentially slow retrieval, before persistence/chargeable dispatch.
-   revalidateCitations(citations);
-   Context currentContext=buildContext(owner,claimed,selected);
+   revalidateCitations(citations,preparation);
+   Context currentContext=buildContext(owner,claimed,selected,preparation);
    if(!context.manifest().get("contextSha256").equals(currentContext.manifest().get("contextSha256")))throw AssistantFailure.conflict("Assistant context changed before dispatch");
-   run.set(store.savePreparation(owner,claimed.id(),claimed.fence(),worker,context.manifest(),citations,retrieval));
-   if(claimed.kind().equals("RETRIEVAL")){store.complete(owner,claimed.id(),claimed.fence(),worker,"COMPLETED","",citations,Map.of("available",false,"purpose","RETRIEVAL"),List.of());terminal.set(true);return;}
+   run.set(store.savePreparation(owner,claimed.id(),claimed.fence(),worker,context.manifest(),List.of(),retrieval));
+   if(claimed.kind().equals("RETRIEVAL")){
+    var lookupOnly=citations.stream().map(c->{var v=new LinkedHashMap<>(c.provenance());v.put("deliveryEvidence","LOOKUP_ONLY");return new Citation(c.id(),c.ordinal(),c.sourceType(),c.sourceId(),c.sourceVersion(),c.projectionVersion(),v,c.excerpt(),c.excerptSha256());}).toList();
+    store.complete(owner,claimed.id(),claimed.fence(),worker,"COMPLETED","",lookupOnly,Map.of("available",false,"purpose","RETRIEVAL"),List.of());terminal.set(true);return;
+   }
    String notice=notice(retrieval);if(!notice.isEmpty()){text.set(notice);run.set(store.checkpoint(owner,claimed.id(),claimed.fence(),worker,run.get().sequence(),notice,Map.of("text",notice)));}
    // Re-check ownership/lifecycle and durable intent immediately before the potentially chargeable send.
-   var wireCitations=citations.stream().map(c->Map.of("id",c.id().toString(),"type",c.sourceType(),"text",c.excerpt())).toList();
+   var boundedContext=new AssistantArtworkContext(json);var wireCitations=boundedContext.wire(citations);boundedContext.validateTextBudget(context.messages(),wireCitations);
    Map<String,Object> request=new LinkedHashMap<>();request.put("contractVersion",1);request.put("runId",claimed.id().toString());request.put("attemptId",claimed.id().toString());request.put("fence",claimed.fence());request.put("configSha256",p.getExpectedConfigSha256());request.put("purpose",claimed.kind());request.put("modelKey",claimed.modelId());request.put("messages",context.messages());request.put("citations",wireCitations);request.put("retrievalStates",retrieval);request.put("budgets",Map.of("totalMs",Math.min(180000,p.getTotalTimeout().toMillis()),"maxOutputTokens",4096));
    if(encode(request).getBytes(StandardCharsets.UTF_8).length>14000000)throw new AssistantFailure(422,"ASSISTANT_INPUT_LIMIT","The selected context exceeds the private execution request limit");
    requireGeneration();
+   preparation.check();
    run.set(store.markIntent(owner,claimed.id(),claimed.fence(),worker,"MODEL"));
+   Runnable confirmSources=()->{if(!sourcesObserved.get()){run.set(store.confirmModelSources(owner,claimed.id(),claimed.fence(),worker,citations));sourcesObserved.set(true);}};
    ai.execute(claimed.id(),request,(type,value)->{
     switch(type){
-     case "delta" -> {Object delta=value.get("text");if(!(delta instanceof String))throw protocol();String next=text.get()+delta;if(next.length()>p.getMaxOutputChars())throw new AssistantFailure(502,"ASSISTANT_OUTPUT_LIMIT","Assistant output exceeds limit");run.set(store.checkpoint(owner,claimed.id(),claimed.fence(),worker,run.get().sequence(),next,Map.of("text",delta)));text.set(next);}
-     case "usage" -> usage.set(Map.of("available",true,"purpose",claimed.kind(),"providerReported",map(value.get("providerReported")),"verifiedBilling",false));
+     case "delta" -> {Object delta=value.get("text");if(!(delta instanceof String))throw protocol();confirmSources.run();String next=text.get()+delta;if(next.length()>p.getMaxOutputChars())throw new AssistantFailure(502,"ASSISTANT_OUTPUT_LIMIT","Assistant output exceeds limit");run.set(store.checkpoint(owner,claimed.id(),claimed.fence(),worker,run.get().sequence(),next,Map.of("text",delta)));text.set(next);}
+     case "usage" -> {confirmSources.run();usage.set(Map.of("available",true,"purpose",claimed.kind(),"providerReported",map(value.get("providerReported")),"verifiedBilling",false));}
      case "choices" -> choices.set(parseChoices(value));
-     case "done" -> {run.set(store.complete(owner,claimed.id(),claimed.fence(),worker,"COMPLETED",text.get(),citations,usage.get(),choices.get()));terminal.set(true);}
+     case "done" -> {confirmSources.run();run.set(store.complete(owner,claimed.id(),claimed.fence(),worker,"COMPLETED",text.get(),citations,usage.get(),choices.get()));terminal.set(true);}
      case "error" -> throw new AssistantFailure(502,"ASSISTANT_UPSTREAM_UNCERTAIN","Assistant upstream execution did not finish reliably");
      default -> throw protocol();
     }
@@ -141,23 +152,24 @@ public final class AssistantExecutionService implements AutoCloseable {
    if(!terminal.get())throw protocol();
   }catch(Exception error){
    if(error instanceof InterruptedException)Thread.currentThread().interrupt();
-   try{Run latest=store.get(owner,claimed.id());if(!latest.terminal()){String state=latest.dispatchedAt()!=null||latest.retrievalDispatchedAt()!=null?"INTERRUPTED":"FAILED";String code=error instanceof AssistantFailure f?f.code():"ASSISTANT_EXECUTION_INTERRUPTED";store.complete(owner,claimed.id(),claimed.fence(),worker,state,latest.checkpoint(),citations,usage.get(),List.of(),code);}}catch(RuntimeException ignored){/* On unavailable persistence the durable lease expires; never resend. */}
+   try{Run latest=store.get(owner,claimed.id());if(!latest.terminal()){String state=latest.dispatchedAt()!=null||latest.retrievalDispatchedAt()!=null?"INTERRUPTED":"FAILED";String code=error instanceof AssistantFailure f?f.code():"ASSISTANT_EXECUTION_INTERRUPTED";store.complete(owner,claimed.id(),claimed.fence(),worker,state,latest.checkpoint(),sourcesObserved.get()?citations:List.of(),usage.get(),List.of(),code);}}catch(RuntimeException ignored){/* On unavailable persistence the durable lease expires; never resend. */}
    ai.cancel(claimed.id());
   }finally{heartbeat.cancel(false);active.remove(claimed.id());capacity.release();}
  }
  private record Context(List<Map<String,Object>> messages,Map<String,Object> manifest,String query){}
- private Context buildContext(long owner,Run run,Map<String,Object> selected){
+ private Context buildContext(long owner,Run run,Map<String,Object> selected,AssistantArtworkDeadline preparation){
+  preparation.check();
   if(run.kind().equals("RETRIEVAL")){
    var input=store.context(owner,run.id(),1).stream().filter(m->m.id().equals(run.inputMessageId())&&m.role().equals("USER")).findFirst().orElseThrow(AssistantFailure::notFound);
    return new Context(List.of(),Map.of("version",1,"messageIds",List.of(input.id().toString()),"contextSha256",digest(input.body()),"images",List.of(),"characterCount",input.body().length(),"configSha256",p.getExpectedConfigSha256()),input.body());
   }
   List<AssistantRecords.Message> window=store.context(owner,run.id(),Math.min(100,p.getMaxContextMessages()+1));boolean truncated=window.size()>p.getMaxContextMessages()||window.size()==100;List<AssistantRecords.Message> history=window.subList(Math.max(0,window.size()-p.getMaxContextMessages()),window.size());List<Map<String,Object>> messages=new ArrayList<>();List<Object> manifests=new ArrayList<>();List<String> ids=new ArrayList<>();List<String> omitted=new ArrayList<>();int chars=0,images=0;String query="";
-  for(var message:history){if(!eligibleContextMessage(message,run.inputMessageId()))continue;if(!Set.of("USER","ASSISTANT").contains(message.role()))continue;if(message.role().equals("ASSISTANT")&&!referencesStillPublic(owner,message.runId())){omitted.add(message.id().toString());continue;}chars+=message.body().length();if(chars>p.getMaxContextChars())throw new AssistantFailure(422,"ASSISTANT_CONTEXT_LIMIT","The selected branch exceeds the context limit");
+  for(var message:history){preparation.check();if(!eligibleContextMessage(message,run.inputMessageId()))continue;if(!Set.of("USER","ASSISTANT").contains(message.role()))continue;if(message.role().equals("ASSISTANT")&&!referencesStillPublic(owner,message.runId(),preparation)){omitted.add(message.id().toString());continue;}chars+=message.body().length();if(chars>p.getMaxContextChars())throw new AssistantFailure(422,"ASSISTANT_CONTEXT_LIMIT","The selected branch exceeds the context limit");
    List<Map<String,Object>> imageInputs=new ArrayList<>();for(UUID id:message.attachmentIds()){var content=attachments.content(owner,id);var image=AssistantImages.prepare(content.bytes(),content.metadata().mimeType(),id.toString());imageInputs.add(image.wire());manifests.add(image.manifest());images++;}
    var item=new LinkedHashMap<String,Object>();item.put("role",message.role().toLowerCase(Locale.ROOT));item.put("content",message.body());item.put("images",imageInputs);messages.add(item);ids.add(message.id().toString());if(message.role().equals("USER"))query=message.body();
   }
   if(!run.kind().equals("SUMMARY"))for(var ref:refs(run.options()))if(ref.includeImage()){
-   var art=artwork(ref);if(media==null||art.mediaAssetId()==null)throw unavailable();var content=media.find(art.mediaAssetId().toString()).orElseThrow(AssistantExecutionService::unavailable);if(content.size()>10*1024*1024)throw AssistantFailure.invalid("Artwork image exceeds input limit");
+   var art=preparation.lookup(()->artwork(ref));if(media==null||art.mediaAssetId()==null)throw unavailable();var content=media.find(art.mediaAssetId().toString()).orElseThrow(AssistantExecutionService::unavailable);if(content.size()>10*1024*1024)throw AssistantFailure.invalid("Artwork image exceeds input limit");
    try(var stream=content.resource().getInputStream()){byte[] bytes=stream.readNBytes(10*1024*1024+1);var image=AssistantImages.prepare(bytes,content.mimeType(),art.artworkId().toString());Map<String,Object> last=messages.get(messages.size()-1);list(last.get("images")).add(image.wire());manifests.add(image.manifest());images++;}catch(java.io.IOException e){throw unavailable();}
   }
   if(images>4||images>0&&!Boolean.TRUE.equals(map(selected.get("capabilities")).get("images")))throw new AssistantFailure(422,"ASSISTANT_IMAGES_UNSUPPORTED","The selected context is incompatible with this model");
@@ -170,17 +182,32 @@ public final class AssistantExecutionService implements AutoCloseable {
  static boolean eligibleContextMessage(AssistantRecords.Message message,UUID input){
   return message.id().equals(input)||message.role().equals("USER")&&Set.of("ACCEPTED","COMPLETED").contains(message.state())||message.role().equals("ASSISTANT")&&message.state().equals("COMPLETED");
  }
- private void revalidateCitations(List<Citation> citations){
-  for(Citation citation:citations)if(citation.sourceType().equals("PLATFORM_ARTWORK")){
-   var provenance=citation.provenance();var current=artwork(new ArtworkRef(UUID.fromString(citation.sourceId()),UUID.fromString((String)provenance.get("batchId")),((Number)provenance.get("revision")).intValue(),false));
-   if(!digest(encode(current.fields())).equals(citation.excerptSha256()))throw AssistantFailure.conflict("Public artwork projection changed before dispatch");
-  }
+ private void revalidateCitations(List<Citation> citations,AssistantArtworkDeadline preparation){
+  preparation.check();
+  var platform=citations.stream().filter(c->c.sourceType().equals("PLATFORM_ARTWORK")).toList();
+  var refs=platform.stream().map(c->{var v=c.provenance();return new ArtworkRef(UUID.fromString(c.sourceId()),UUID.fromString((String)v.get("batchId")),((Number)v.get("revision")).intValue(),false);}).toList();
+  var current=selectedArtworks(refs,preparation);
+  for(int i=0;i<platform.size();i++)if(!digest(encode(current.get(i).fields())).equals(AssistantArtworkContext.projectionHash(platform.get(i))))throw AssistantFailure.conflict("Public artwork projection changed before dispatch");
  }
- private boolean referencesStillPublic(long owner,UUID sourceRun){
+ private List<AssistantArtworkRead.Artwork> selectedArtworks(List<ArtworkRef> refs){return selectedArtworks(refs,null);}
+ private List<AssistantArtworkRead.Artwork> selectedArtworks(List<ArtworkRef> refs,AssistantArtworkDeadline preparation){
+  if(preparation!=null)preparation.check();
+  if(refs.isEmpty())return List.of();if(artworks==null)throw unavailable();
+  try{
+   var found=preparation==null?artworks.search("",refs.stream().map(ArtworkRef::artworkId).toList(),5):preparation.lookup(()->artworks.search("",refs.stream().map(ArtworkRef::artworkId).toList(),5));var result=new ArrayList<AssistantArtworkRead.Artwork>();
+   for(var ref:refs){var value=found.stream().filter(a->a.artworkId().equals(ref.artworkId())).findFirst().orElseThrow(()->new AssistantFailure(404,"ASSISTANT_ARTWORK_NOT_FOUND","Selected artwork is no longer accessible; remove it and select again"));
+    if(!value.batchId().equals(ref.expectedBatchId())||value.revision()!=ref.expectedRevision())throw new AssistantFailure(409,"ASSISTANT_ARTWORK_REVISION_CHANGED","Artwork revision changed; select the current public version");
+    result.add(value);
+   }return result;
+  }catch(org.springframework.dao.QueryTimeoutException|org.springframework.transaction.TransactionTimedOutException timeout){throw new AssistantFailure(504,"ASSISTANT_ARTWORK_TIMEOUT","Platform artwork lookup timed out; no model was dispatched");}
+  catch(org.springframework.dao.DataAccessException failure){throw unavailable();}
+ }
+ private boolean referencesStillPublic(long owner,UUID sourceRun,AssistantArtworkDeadline preparation){
+  preparation.check();
   if(sourceRun==null)return true;
   for(var citation:store.citations(owner,sourceRun)){
    if(citation.sourceType().equals("PLATFORM_ARTWORK")){
-    try{var v=citation.provenance();var current=artwork(new ArtworkRef(UUID.fromString(citation.sourceId()),UUID.fromString((String)v.get("batchId")),((Number)v.get("revision")).intValue(),false));if(!digest(encode(current.fields())).equals(citation.excerptSha256()))return false;}catch(RuntimeException unavailable){return false;}
+    try{var v=citation.provenance();var current=preparation.lookup(()->artwork(new ArtworkRef(UUID.fromString(citation.sourceId()),UUID.fromString((String)v.get("batchId")),((Number)v.get("revision")).intValue(),false)));if(!digest(encode(current.fields())).equals(AssistantArtworkContext.projectionHash(citation)))return false;}catch(AssistantFailure failure){if(failure.code().equals("ASSISTANT_ARTWORK_TIMEOUT"))throw failure;return false;}catch(RuntimeException unavailable){preparation.check();return false;}
    }else if(citation.sourceType().equals("RAGFLOW_DOCUMENT")&&!p.getExpectedConfigSha256().equals(citation.provenance().get("configSha256")))return false;
   }
   return true;

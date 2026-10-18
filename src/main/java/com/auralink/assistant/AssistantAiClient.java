@@ -9,7 +9,10 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hc.client5.http.classic.methods.HttpUriRequestBase;
 import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -21,6 +24,8 @@ import org.apache.hc.core5.util.Timeout;
 
 /** Private fixed-origin client. HTTP retries, redirects, cookies and proxy-env inheritance are disabled. */
 public final class AssistantAiClient implements AutoCloseable {
+ private static final Logger DIAGNOSTICS=LoggerFactory.getLogger(AssistantAiClient.class);
+ private static final Set<String> KNOWN_EVENTS=Set.of("delta","usage","choices","done","error","heartbeat");
  private final AssistantExecutionProperties properties;
  private final ObjectMapper json;
  private final URI base;
@@ -53,18 +58,36 @@ public final class AssistantAiClient implements AutoCloseable {
   request.setEntity(new ByteArrayEntity(json.writeValueAsBytes(payload),ContentType.APPLICATION_JSON));
   requests.put(id,request);
   long start=System.nanoTime();
-  var total=deadlines.schedule(request::cancel,properties.getTotalTimeout().toMillis(),TimeUnit.MILLISECONDS);
+  AtomicReference<String> cancellation=new AtomicReference<>("NONE");
+  trace(id,"EXECUTION_START",start,"-","-","NONE");
+  var total=deadlines.schedule(()->{cancellation.compareAndSet("NONE","TOTAL_TIMER");trace(id,"CANCEL_TIMER",start,"-","-","TOTAL_TIMER");request.cancel();},properties.getTotalTimeout().toMillis(),TimeUnit.MILLISECONDS);
   try(CloseableHttpResponse response=http.execute(request)){
+   String type=response.getFirstHeader("Content-Type")==null?"MISSING":response.getFirstHeader("Content-Type").getValue().startsWith("text/event-stream")?"text/event-stream":"OTHER";
+   trace(id,"RESPONSE_HEADERS",start,Integer.toString(response.getCode()),type,cancellation.get());
    if(response.getCode()!=200)throw new IOException("Assistant execution refused");
    if(response.getFirstHeader("Content-Type")==null||!response.getFirstHeader("Content-Type").getValue().startsWith("text/event-stream")||response.getEntity()==null)throw new IOException("Assistant execution type invalid");
    try(InputStream body=response.getEntity().getContent()){
     streams.put(id,body);AtomicLong last=new AtomicLong(System.nanoTime());
-    var deadline=deadlines.scheduleAtFixedRate(()->{long now=System.nanoTime();if(now-start>properties.getTotalTimeout().toNanos()||now-last.get()>properties.getIdleTimeout().toNanos())request.cancel();},50,50,TimeUnit.MILLISECONDS);
-    try{AssistantSseReader.read(body,65536,Math.max(262144,properties.getMaxOutputChars()*12),(type,data)->{last.set(System.nanoTime());try{consumer.accept(type,json.readValue(data,new TypeReference<Map<String,Object>>(){}));}catch(IOException e){throw new AssistantFailure(502,"ASSISTANT_PROTOCOL_ERROR","Invalid Assistant stream");}});}finally{deadline.cancel(false);streams.remove(id,body);}
+    var deadline=deadlines.scheduleAtFixedRate(()->{long now=System.nanoTime();if(now-start>properties.getTotalTimeout().toNanos()||now-last.get()>properties.getIdleTimeout().toNanos()){String reason=now-start>properties.getTotalTimeout().toNanos()?"TOTAL_TIMER":"IDLE_TIMER";cancellation.compareAndSet("NONE",reason);trace(id,"CANCEL_TIMER",start,"-","-",reason);request.cancel();}},50,50,TimeUnit.MILLISECONDS);
+    try{AssistantSseReader.read(body,65536,Math.max(262144,properties.getMaxOutputChars()*12),(event,data)->{
+     try{
+      Map<String,Object> value=json.readValue(data,new TypeReference<Map<String,Object>>(){});
+      if(event.equals("heartbeat")&&!Map.of("kind","provider_activity").equals(value))throw new AssistantFailure(502,"ASSISTANT_PROTOCOL_ERROR","Invalid Assistant activity event");
+      last.set(System.nanoTime());trace(id,"SSE_EVENT",start,"-",KNOWN_EVENTS.contains(event)?event:"UNKNOWN",cancellation.get());
+      // Transport liveness only: never send reasoning/activity to persistence,
+      // answer/citation callbacks, public SSE, or terminal-state processing.
+      if(!event.equals("heartbeat"))consumer.accept(event,value);
+     }catch(IOException e){throw new AssistantFailure(502,"ASSISTANT_PROTOCOL_ERROR","Invalid Assistant stream");}
+    });}finally{deadline.cancel(false);streams.remove(id,body);}
    }
-  }finally{total.cancel(false);requests.remove(id,request);}
+  }catch(IOException|RuntimeException error){trace(id,"EXECUTION_EXCEPTION",start,"-",error.getClass().getName(),cancellation.get());throw error;}
+  finally{total.cancel(false);requests.remove(id,request);trace(id,"EXECUTION_END",start,"-","-",cancellation.get());}
  }
- public void cancel(UUID id){closeStream(id);try{request("POST","/executions/"+id+"/cancel",Map.of());}catch(RuntimeException ignored){/* Core durable fencing is authoritative; network cancellation is best effort. */}}
+ public void cancel(UUID id){long start=System.nanoTime();trace(id,"CANCEL_REQUEST_START",start,"-","-","EXPLICIT_OR_RECOVERY");closeStream(id);try{request("POST","/executions/"+id+"/cancel",Map.of());trace(id,"CANCEL_REQUEST_END",start,"-","-","BEST_EFFORT_ACCEPTED");}catch(RuntimeException ignored){trace(id,"CANCEL_REQUEST_EXCEPTION",start,"-",ignored.getClass().getName(),"BEST_EFFORT_FAILED");/* Core durable fencing is authoritative; network cancellation is best effort. */}}
+ /** Opt-in metadata only: never messages, exception text/stack, endpoints, tokens or stream content. */
+ private static void trace(UUID id,String phase,long start,String status,String detail,String cancellation){
+  if(DIAGNOSTICS.isDebugEnabled())DIAGNOSTICS.debug("assistant.transport runId={} phase={} elapsedMs={} status={} detail={} cancellation={}",id,phase,TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start),status,detail,cancellation);
+ }
  public void closeStream(UUID id){HttpUriRequestBase request=requests.remove(id);if(request!=null)request.cancel();InputStream body=streams.remove(id);if(body!=null)try{body.close();}catch(IOException ignored){}}
  private Map<String,Object> request(String method,String path,Map<String,Object> body){
   return request(method,path,body,8000);
