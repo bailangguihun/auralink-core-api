@@ -33,7 +33,8 @@ public class PaintingController {
       @RequestParam(defaultValue = "0") int page,
       @RequestParam(defaultValue = "24") int size,
       @RequestParam(defaultValue = "source") String sort,
-      @RequestParam(defaultValue = "asc") String direction
+      @RequestParam(defaultValue = "asc") String direction,
+      @RequestParam(required = false) String orderDate
    ) {
       return this.paintingQueryService
          .listPaintings(
@@ -51,7 +52,8 @@ public class PaintingController {
             page,
             size,
             sort,
-            direction
+            direction,
+            orderDate
          );
    }
 

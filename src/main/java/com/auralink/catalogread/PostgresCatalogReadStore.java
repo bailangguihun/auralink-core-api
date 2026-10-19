@@ -215,7 +215,11 @@ final class PostgresCatalogReadStore implements CatalogReadStore {
    }
 
    private MapSqlParameterSource parameters(CatalogReadStore.CatalogQuery query) {
+      if ("daily".equals(query.sort()) && query.orderDate() == null) {
+         throw new IllegalArgumentException("validated daily order date is required");
+      }
       return new MapSqlParameterSource()
+         .addValue("orderDate", query.orderDate() == null ? null : query.orderDate().toString())
          .addValue("keyword", like(query.keyword()))
          .addValue("dynasty", query.dynasty())
          .addValue("category", query.category())
@@ -272,6 +276,9 @@ final class PostgresCatalogReadStore implements CatalogReadStore {
       String direction = "desc".equals(query.direction()) ? "DESC" : "ASC";
 
       String column = switch (query.sort()) {
+         // Rank the complete matching set before LIMIT/OFFSET. A stable ID tie-breaker
+         // keeps page boundaries deterministic even in the event of a hash collision.
+         case "daily" -> "md5(:orderDate || ':' || p.public_id::text) COLLATE \"C\"";
          case "source" -> "sr.source_record_key";
          case "title" -> "p.title";
          case "author" -> "p.author_name";
