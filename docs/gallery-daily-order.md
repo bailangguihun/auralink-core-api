@@ -45,6 +45,12 @@ security primitive. The date is bound as a query parameter. Existing current
 revision joins, filters, visibility eligibility, and total counts are unchanged.
 There is no schema migration and no data or media rewrite.
 
+Keyword lookup remains a parameter-bound literal substring search over title,
+author, and the current source's subject annotation. SQL uses an explicit
+PostgreSQL escape string so the escape is exactly one backslash, independent of
+`standard_conforming_strings`; `%`, `_`, and backslashes in user input do not
+become wildcard operators. Count and page queries share the same predicate.
+
 With unchanged catalog membership, repeat requests on the same date have stable
 page boundaries, and the next date produces another deterministic ordering.
 This is not a database snapshot: concurrent import, withdrawal, or revision
@@ -60,9 +66,14 @@ sorting, and the unchanged daily recommendation query path.
 `GalleryDailyOrderPostgresTest` uses disposable schemas in the guarded loopback
 test database to check whole-set ordering, page-size independence, stable/next-day
 order, filters, canonical current membership, and old source ordering.
+`GalleryKeywordPostgresTest` executes 36 real PostgreSQL combinations across
+both daily/source sorting and title/author/subject matches: Chinese text,
+percent, underscore, backslash, quoted SQL-looking text, and mixed escape
+characters. Each checks current eligible membership, literal-only result counts,
+stable pagination, out-of-range pages, and empty results.
 
 ```bash
-mvn -B -ntp -Dtest=GalleryDailyOrderTest,GalleryDailyOrderPostgresTest,R25ProductionContractTest,AssistantArtworkReadPostgresTest test
+mvn -B -ntp -Dtest=GalleryDailyOrderTest,GalleryDailyOrderPostgresTest,GalleryKeywordPostgresTest,R25ProductionContractTest,AssistantArtworkReadPostgresTest test
 ```
 
 The PostgreSQL tests only run when the existing `ASSISTANT_TEST_JDBC_URL`,

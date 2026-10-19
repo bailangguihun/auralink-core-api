@@ -236,8 +236,10 @@ final class PostgresCatalogReadStore implements CatalogReadStore {
    private String listWhere(CatalogReadStore.CatalogQuery query, MapSqlParameterSource parameters) {
       StringBuilder where = new StringBuilder(GALLERY_WHERE);
       if (query.keyword() != null) {
+         // PostgreSQL E-string syntax makes the SQL escape exactly one backslash.
+         // User input stays bound through like(); %, _ and backslashes remain literal.
          where.append(
-            " AND (p.title ILIKE :keyword ESCAPE '\\\\' OR p.author_name ILIKE :keyword ESCAPE '\\\\' OR EXISTS (SELECT 1 FROM catalog_annotation_revisions keyword_ar WHERE keyword_ar.batch_id = sr.batch_id AND keyword_ar.revision = sr.revision AND keyword_ar.annotation_file_id = sr.annotation_file_id AND keyword_ar.record_number = sr.record_number AND keyword_ar.field_key = 'legacy.subject' AND keyword_ar.normalized_value ILIKE :keyword ESCAPE '\\\\'))"
+            " AND (p.title ILIKE :keyword ESCAPE E'\\\\' OR p.author_name ILIKE :keyword ESCAPE E'\\\\' OR EXISTS (SELECT 1 FROM catalog_annotation_revisions keyword_ar WHERE keyword_ar.batch_id = sr.batch_id AND keyword_ar.revision = sr.revision AND keyword_ar.annotation_file_id = sr.annotation_file_id AND keyword_ar.record_number = sr.record_number AND keyword_ar.field_key = 'legacy.subject' AND keyword_ar.normalized_value ILIKE :keyword ESCAPE E'\\\\'))"
          );
       }
 
