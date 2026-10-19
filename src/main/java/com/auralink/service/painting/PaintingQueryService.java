@@ -18,7 +18,9 @@ import com.auralink.entity.User;
 import com.auralink.repository.PaintingFavoriteRepository;
 import com.auralink.repository.PaintingRepository;
 import com.auralink.service.CurrentUserService;
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -27,6 +29,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -53,6 +56,7 @@ public class PaintingQueryService {
    private final DynastyNormalizer dynastyNormalizer;
    private final ObjectProvider<CatalogReadStore> catalogReadStoreProvider;
    private final ObjectProvider<CatalogAuthStore> catalogAuthStoreProvider;
+   private final Clock clock;
 
    public PaintingPageResponse listPaintings(
       String keyword,
@@ -71,6 +75,15 @@ public class PaintingQueryService {
       String sort,
       String direction
    ) {
+      return this.listPaintings(keyword, dynasty, category, author, subject, paintingSchool, style,
+         artisticConception, paintingMaterial, collectionInstitution, collectionPlatform, page, size, sort, direction, null);
+   }
+
+   public PaintingPageResponse listPaintings(
+      String keyword, String dynasty, String category, String author, String subject, String paintingSchool,
+      String style, String artisticConception, String paintingMaterial, String collectionInstitution,
+      String collectionPlatform, int page, int size, String sort, String direction, String requestedOrderDate
+   ) {
       this.validatePage(page, size);
       String safeKeyword = this.normalizeFilter(keyword, "keyword", 200);
       String safeDynasty = this.normalizedDynasty(dynasty);
@@ -83,9 +96,15 @@ public class PaintingQueryService {
       String safePaintingMaterial = this.normalizeFilter(paintingMaterial, "paintingMaterial", 512);
       String safeCollectionInstitution = this.normalizeFilter(collectionInstitution, "collectionInstitution", 512);
       String safeCollectionPlatform = this.normalizeFilter(collectionPlatform, "collectionPlatform", 512);
+      String sortName = normalizedSort(sort);
       CatalogReadStore catalogReadStore = (CatalogReadStore)this.catalogReadStoreProvider.getIfAvailable();
       if (catalogReadStore != null) {
-         this.sort(sort, direction);
+         boolean daily = "daily".equals(sortName);
+         this.sort(daily ? "source" : sortName, direction);
+         LocalDate orderDate = daily ? this.currentOrderDate(requestedOrderDate) : null;
+         // A new day starts a new result sequence. Never return a later page from a
+         // different date than the client used for its earlier pages.
+         int effectivePage = daily && !orderDate.toString().equals(requestedOrderDate) ? 0 : page;
          CatalogReadStore.CatalogPage catalogPage = catalogReadStore.list(
             new CatalogReadStore.CatalogQuery(
                safeKeyword,
@@ -99,14 +118,19 @@ public class PaintingQueryService {
                safePaintingMaterial,
                safeCollectionInstitution,
                safeCollectionPlatform,
-               page,
+               effectivePage,
                size,
-               normalizedSort(sort),
-               normalizedDirection(direction)
+               sortName,
+               normalizedDirection(direction),
+               orderDate
             )
          );
-         return this.catalogPage(catalogPage, this.catalogFavoritedIds(this.currentUserService.findCurrentUser(), catalogPage.items()));
+         return this.catalogPage(catalogPage, this.catalogFavoritedIds(this.currentUserService.findCurrentUser(), catalogPage.items()))
+            .withOrderDate(orderDate == null ? null : orderDate.toString());
       } else {
+         if ("daily".equals(sortName)) {
+            throw invalidSort("每日排序需要 PostgreSQL 画作目录");
+         }
          Specification<Painting> specification = PaintingSpecifications.gallery(
             safeKeyword,
             safeDynasty,
@@ -128,6 +152,19 @@ public class PaintingQueryService {
             .toList();
          return PaintingPageResponse.from(paintings, items);
       }
+   }
+
+   private LocalDate currentOrderDate(String requested) {
+      if (requested != null) {
+         try {
+            if (!requested.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}") || !LocalDate.parse(requested).toString().equals(requested)) {
+               throw invalidQuery("orderDate 必须为有效的 YYYY-MM-DD 日期");
+            }
+         } catch (DateTimeParseException exception) {
+            throw invalidQuery("orderDate 必须为有效的 YYYY-MM-DD 日期");
+         }
+      }
+      return LocalDate.now(this.clock.withZone(this.paintingProperties.getDailyZone()));
    }
 
    public PaintingSummaryResponse getDailyPainting() {
@@ -463,6 +500,7 @@ public class PaintingQueryService {
       return new ApiV1Exception(HttpStatus.CONFLICT, ApiErrorCode.CATALOG_READ_WRITE_UNSUPPORTED, "当前目录集成未启用这项关联业务写入");
    }
 
+   @Autowired
    public PaintingQueryService(
       final PaintingRepository paintingRepository,
       final PaintingFavoriteRepository favoriteRepository,
@@ -473,6 +511,21 @@ public class PaintingQueryService {
       final ObjectProvider<CatalogReadStore> catalogReadStoreProvider,
       final ObjectProvider<CatalogAuthStore> catalogAuthStoreProvider
    ) {
+      this(paintingRepository, favoriteRepository, currentUserService, responseMapper, paintingProperties,
+         dynastyNormalizer, catalogReadStoreProvider, catalogAuthStoreProvider, Clock.systemUTC());
+   }
+
+   PaintingQueryService(
+      final PaintingRepository paintingRepository,
+      final PaintingFavoriteRepository favoriteRepository,
+      final CurrentUserService currentUserService,
+      final PaintingResponseMapper responseMapper,
+      final PaintingProperties paintingProperties,
+      final DynastyNormalizer dynastyNormalizer,
+      final ObjectProvider<CatalogReadStore> catalogReadStoreProvider,
+      final ObjectProvider<CatalogAuthStore> catalogAuthStoreProvider,
+      final Clock clock
+   ) {
       this.paintingRepository = paintingRepository;
       this.favoriteRepository = favoriteRepository;
       this.currentUserService = currentUserService;
@@ -481,5 +534,6 @@ public class PaintingQueryService {
       this.dynastyNormalizer = dynastyNormalizer;
       this.catalogReadStoreProvider = catalogReadStoreProvider;
       this.catalogAuthStoreProvider = catalogAuthStoreProvider;
+      this.clock = clock;
    }
 }

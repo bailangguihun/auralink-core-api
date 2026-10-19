@@ -1,5 +1,6 @@
 package com.auralink.catalogread;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -88,7 +89,14 @@ public interface CatalogReadStore {
       int page,
       int size,
       String sort,
-      String direction
+      String direction,
+      LocalDate orderDate
    ) {
+      public CatalogQuery(String keyword, String dynasty, String category, String author, String subject,
+         String paintingSchool, String style, String artisticConception, String paintingMaterial,
+         String collectionInstitution, String collectionPlatform, int page, int size, String sort, String direction) {
+         this(keyword, dynasty, category, author, subject, paintingSchool, style, artisticConception,
+            paintingMaterial, collectionInstitution, collectionPlatform, page, size, sort, direction, null);
+      }
    }
 }
