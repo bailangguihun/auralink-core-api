@@ -173,7 +173,8 @@ public class CreationExecutionTransactionService {
          creation.getSourceModality(),
          creation.getSourceText(),
          creation.getSourceAsset() == null ? null : creation.getSourceAsset().getId(),
-         creation.getSourcePainting() == null ? null : creation.getSourcePainting().getId()
+         creation.getSourcePainting() == null ? null : creation.getSourcePainting().getId(),
+         creation.getRetryVersion()
       );
    }
 
@@ -220,8 +221,13 @@ public class CreationExecutionTransactionService {
       String sourceModality,
       String sourceText,
       Long sourceAssetId,
-      Long sourcePaintingId
+      Long sourcePaintingId,
+      int retryVersion
    ) {
+      public ClaimedCreationData(Long creationId, String claimToken, Long ownerId, String workflowSnapshot,
+                                 String sourceModality, String sourceText, Long sourceAssetId, Long sourcePaintingId) {
+         this(creationId, claimToken, ownerId, workflowSnapshot, sourceModality, sourceText, sourceAssetId, sourcePaintingId, 0);
+      }
    }
 
    public record StepData(

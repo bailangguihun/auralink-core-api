@@ -69,7 +69,7 @@ public class AuralinkVmmProviderAdapter implements CreationProviderAdapter {
          Path outputRoot = this.endpointPolicy.resolveOutputRoot();
          String dataUrl = this.dataUrlEncoder.encodeImage(source, this.properties.getMaxImageInputBytes());
          int durationSeconds = this.requireDuration(request.parameters());
-         String fileName = this.bulkheads.execute(ProviderBulkheadKind.VMM, () -> this.client.generate(request.requestId(), dataUrl, durationSeconds));
+         String fileName = this.bulkheads.execute(ProviderBulkheadKind.VMM, () -> this.client.generate(request.requestId(), dataUrl, durationSeconds, request.vmmContext()));
          ProviderArtifact output = this.stageContainedWave(outputRoot, fileName);
          return new ProviderExecutionResult(request.requestId(), request.operation(), "auralink-vmm", WorkflowModality.AUDIO, new ProviderBinaryOutput(output));
       } else {

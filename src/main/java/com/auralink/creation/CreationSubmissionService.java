@@ -16,6 +16,7 @@ import com.auralink.repository.CreationExecutionAttemptRepository;
 import com.auralink.repository.CreationRepository;
 import com.auralink.repository.CreationStepRepository;
 import com.auralink.service.CurrentUserService;
+import com.auralink.provider.vmm.VmmManagedAdmission;
 import com.auralink.workflow.service.WorkflowExecutionPreparer;
 import java.time.Clock;
 import java.time.LocalDateTime;
@@ -46,6 +47,7 @@ public class CreationSubmissionService {
    private final CreationStepRepository steps;
    private final CreationResponseMapper responseMapper;
    private final Clock clock;
+   private final VmmManagedAdmission managedVmm;
 
    @Transactional
    public CreationQueuedResponse submit(CreationSubmissionRequest request) {
@@ -55,6 +57,7 @@ public class CreationSubmissionService {
          WorkflowExecutionPreparer.PreparedWorkflow workflow = this.workflowPreparer.prepare(request.getWorkflowId(), owner);
          CreationSourceResolver.ResolvedSource source = this.sourceResolver.resolve(request.getSource(), workflow.sourceModality(), owner);
          this.capabilityService.requireExecutionAvailable(workflow, source);
+         this.managedVmm.require(owner.getId(), workflow, source);
          if (this.creations.countByStatusIn(List.of(CreationStatus.QUEUED.name(), CreationStatus.RUNNING.name())) >= this.properties.getQueueCapacity()) {
             throw new ApiV1Exception(HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.CREATION_QUEUE_FULL, "创作队列当前已满");
          }
@@ -165,7 +168,8 @@ public class CreationSubmissionService {
       final CreationExecutionAttemptRepository executionAttempts,
       final CreationStepRepository steps,
       final CreationResponseMapper responseMapper,
-      final Clock clock
+      final Clock clock,
+      final VmmManagedAdmission managedVmm
    ) {
       this.featureGuard = featureGuard;
       this.properties = properties;
@@ -180,5 +184,6 @@ public class CreationSubmissionService {
       this.steps = steps;
       this.responseMapper = responseMapper;
       this.clock = clock;
+      this.managedVmm = managedVmm;
    }
 }

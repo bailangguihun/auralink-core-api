@@ -17,13 +17,21 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Locale;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Component
 public class VmmEndpointPolicy implements VmmEndpointResolver {
    private final CreationProviderProperties creationProperties;
    private final ProviderProperties.Provider provider;
+   private final VmmManagedGate managedGate;
 
    public VmmEndpointPolicy(CreationProviderProperties creationProperties, ProviderProperties providerProperties) {
+      this(creationProperties, providerProperties, null);
+   }
+
+   @Autowired
+   public VmmEndpointPolicy(CreationProviderProperties creationProperties, ProviderProperties providerProperties, VmmManagedGate managedGate) {
+      this.managedGate = managedGate;
       this.creationProperties = creationProperties;
       this.provider = providerProperties.getPaintingMusic();
    }
@@ -38,6 +46,7 @@ public class VmmEndpointPolicy implements VmmEndpointResolver {
             this.validateBase(this.provider.getBaseUrl());
             CreationProviderConfigurationChecks.requireVmm(this.creationProperties);
             this.validateExistingOutputRoot(this.validateConfiguredOutputRoot(this.provider.getOutputRoot()));
+            if (managedGate != null && managedGate.enabled()) return managedGate.readiness(resolveGenerationEndpoint());
             return this.readiness(ProviderReadinessState.READY_FOR_CONTROLLED_EXECUTION, "VMM_CONFIGURATION_VALIDATED_NO_AUTOMATIC_HEALTH_CHECK");
          } catch (ProviderExecutionException exception) {
             return this.readiness(ProviderReadinessState.CONFIGURATION_INVALID, "PROVIDER_CONFIGURATION_INVALID");
