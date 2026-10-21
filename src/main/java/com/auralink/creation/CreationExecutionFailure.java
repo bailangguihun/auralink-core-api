@@ -56,6 +56,7 @@ public record CreationExecutionFailure(String code, String message) {
          case PROVIDER_FEATURE_DISABLED -> featureDisabled();
          case PROVIDER_CONFIGURATION_MISSING -> new CreationExecutionFailure("CREATION_PROVIDER_CONFIGURATION_MISSING", "创作服务配置不可用");
          case PROVIDER_CONFIGURATION_INVALID -> new CreationExecutionFailure("CREATION_PROVIDER_CONFIGURATION_INVALID", "创作服务配置无效");
+         case PROVIDER_OUTCOME_UNCERTAIN -> new CreationExecutionFailure("PROVIDER_OUTCOME_UNCERTAIN", "音乐请求可能已执行，结果尚不确定，请勿自动重试");
          case PROVIDER_TIMEOUT -> new CreationExecutionFailure("PROVIDER_TIMEOUT", "创作服务请求超时");
          case PROVIDER_RATE_LIMITED -> new CreationExecutionFailure("PROVIDER_RATE_LIMITED", "创作服务当前繁忙");
          case PROVIDER_REJECTED -> new CreationExecutionFailure("PROVIDER_REJECTED", "创作服务拒绝了本次请求");

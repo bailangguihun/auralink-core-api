@@ -139,6 +139,13 @@ auralink:
     shutdown-await: "${AURALINK_CREATIONS_SHUTDOWN_AWAIT_SECONDS:30}s"
     default-page-size: ${AURALINK_CREATIONS_DEFAULT_PAGE_SIZE:20}
     max-page-size: ${AURALINK_CREATIONS_MAX_PAGE_SIZE:100}
+  # Optional managed role; startup and readiness stay closed until a reviewed binding enables it.
+  vmm-managed:
+    enabled: ${AURALINK_VMM_MANAGED_ENABLED:false}
+    token-file: "${AURALINK_VMM_MANAGED_TOKEN_FILE:}"
+    acceptance-owner-id: "${AURALINK_VMM_ACCEPTANCE_OWNER_ID:}"
+    acceptance-source-painting-id: "${AURALINK_VMM_ACCEPTANCE_SOURCE_PAINTING_ID:}"
+    acceptance-duration-seconds: "${AURALINK_VMM_ACCEPTANCE_DURATION_SECONDS:}"
   creation-providers:
     enabled: ${AURALINK_CREATION_PROVIDERS_ENABLED:false}
     staging-dir: "${AURALINK_PROVIDER_STAGING_DIR:/tmp/auralink-provider-staging}"
