@@ -11,6 +11,7 @@ import com.auralink.creation.provider.ProviderExecutionResult;
 import com.auralink.creation.provider.ProviderOutput;
 import com.auralink.creation.provider.ProviderTextOutput;
 import com.auralink.provider.artifact.ProviderArtifact;
+import com.auralink.provider.vmm.VmmExecutionContext;
 import com.auralink.provider.qwen.PaintingPoemResultValidator;
 import com.auralink.workflow.WorkflowModality;
 import com.auralink.workflow.WorkflowNodeKind;
@@ -236,7 +237,10 @@ public class CreationWorker {
             providerCallAdmitted = this.recoveryGate != null;
             CreationProviderAdapter adapter = this.adapters.require(snapshotStep.operation(), snapshotStep.providerCode());
             ProviderExecutionResult result = adapter.execute(
-               new ProviderExecutionRequest(requestKey.get(), snapshotStep.operation(), snapshotStep.providerCode(), input.input(), snapshotStep.parameters())
+               new ProviderExecutionRequest(requestKey.get(), snapshotStep.operation(), snapshotStep.providerCode(), input.input(), snapshotStep.parameters(),
+                  snapshotStep.operation() == WorkflowOperation.PAINTING_TO_MUSIC
+                     ? new VmmExecutionContext(creation.ownerId(), creation.creationId(), step.stepId(), creation.retryVersion(), creation.sourcePaintingId())
+                     : null)
             );
             providerReturned = true;
             resultArtifact = this.artifactOf(result == null ? null : result.output());

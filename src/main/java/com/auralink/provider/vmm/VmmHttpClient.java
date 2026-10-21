@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -23,6 +24,7 @@ public class VmmHttpClient {
    private final ObjectMapper objectMapper;
    private final CreationProviderProperties properties;
    private final VmmEndpointResolver endpointResolver;
+   private final VmmManagedGate managedGate;
 
    public VmmHttpClient(
       @Qualifier("vmmProviderRestClient") RestClient restClient,
@@ -31,6 +33,13 @@ public class VmmHttpClient {
       CreationProviderProperties properties,
       VmmEndpointResolver endpointResolver
    ) {
+      this(restClient, httpExecutor, objectMapper, properties, endpointResolver, null);
+   }
+
+   @Autowired
+   public VmmHttpClient(@Qualifier("vmmProviderRestClient") RestClient restClient, ProviderHttpExecutor httpExecutor,
+                        ObjectMapper objectMapper, CreationProviderProperties properties, VmmEndpointResolver endpointResolver, VmmManagedGate managedGate) {
+      this.managedGate = managedGate;
       this.restClient = restClient;
       this.httpExecutor = httpExecutor;
       this.objectMapper = objectMapper;
@@ -39,12 +48,47 @@ public class VmmHttpClient {
    }
 
    public String generate(String requestId, String imageDataUrl, int durationSeconds) {
+      return generate(requestId, imageDataUrl, durationSeconds, null);
+   }
+
+   public String generate(String requestId, String imageDataUrl, int durationSeconds, VmmExecutionContext context) {
       if (durationSeconds >= 3 && durationSeconds <= 30) {
          URI endpoint = this.endpointResolver.resolveGenerationEndpoint();
          long maxRequestBytes = Math.multiplyExact(this.properties.getMaxImageInputBytes(), 2L);
-         ProviderHttpResponse response = this.httpExecutor
-            .postJson(this.restClient, endpoint, null, requestId, new VmmGenerationRequest(imageDataUrl, durationSeconds), maxRequestBytes, 65536L);
-         return this.parseFileName(response.body());
+         boolean managed = managedGate != null && managedGate.enabled();
+         RestClient client = restClient;
+         if (managed) {
+            managedGate.requireDispatch(endpoint, context, durationSeconds);
+            client = restClient.mutate().defaultHeaders(headers -> {
+               headers.set(VmmManagedGate.TOKEN_HEADER, managedGate.token());
+               headers.set("X-ArtLIVE-VMM-Request-ID", requestId);
+               headers.set("X-ArtLIVE-VMM-Owner-Id", Long.toString(context.ownerId()));
+               headers.set("X-ArtLIVE-VMM-Creation-Id", Long.toString(context.creationId()));
+               headers.set("X-ArtLIVE-VMM-Step-Id", Long.toString(context.stepId()));
+               headers.set("X-ArtLIVE-VMM-Retry-Version", Integer.toString(context.retryVersion()));
+               headers.set("X-ArtLIVE-VMM-Source-Painting-Id", context.sourcePaintingId().toString());
+            }).build();
+         }
+         try {
+            ProviderHttpResponse response = this.httpExecutor.postJson(client, endpoint, null, requestId,
+               new VmmGenerationRequest(imageDataUrl, durationSeconds), maxRequestBytes, 65536L);
+            if (managed) {
+               JsonNode body = StrictProviderJson.parse(objectMapper, response.body());
+               if (body == null || !body.isObject() || !requestId.equals(body.path("request_id").asText())) throw invalid("Managed VMM response identity does not match", null);
+            }
+            return this.parseFileName(response.body());
+         } catch (ProviderExecutionException exception) {
+            if (managed && (exception.category() == ProviderErrorCategory.PROVIDER_TIMEOUT ||
+                exception.category() == ProviderErrorCategory.PROVIDER_UNAVAILABLE ||
+                exception.category() == ProviderErrorCategory.PROVIDER_INVALID_RESPONSE)) {
+               throw new ProviderExecutionException(ProviderErrorCategory.PROVIDER_OUTCOME_UNCERTAIN,
+                  "Managed VMM request outcome is uncertain; it must not be automatically replayed", exception);
+            }
+            throw exception;
+         } catch (java.io.IOException exception) {
+            throw new ProviderExecutionException(ProviderErrorCategory.PROVIDER_OUTCOME_UNCERTAIN,
+               "Managed VMM response is incomplete; it must not be automatically replayed", exception);
+         }
       } else {
          throw new ProviderExecutionException(ProviderErrorCategory.PROVIDER_REJECTED, "VMM duration is outside the supported range");
       }
