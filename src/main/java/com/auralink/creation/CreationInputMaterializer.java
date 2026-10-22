@@ -1,5 +1,6 @@
 package com.auralink.creation;
 
+import com.auralink.catalogread.CatalogMediaService;
 import com.auralink.config.properties.CreationProviderProperties;
 import com.auralink.creation.provider.PaintingMetadataContext;
 import com.auralink.creation.provider.ProviderImageInput;
@@ -19,6 +20,7 @@ import com.auralink.service.media.MediaAssetStorageService;
 import com.auralink.workflow.WorkflowModality;
 import java.io.IOException;
 import java.io.InputStream;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +33,7 @@ public class CreationInputMaterializer {
    private final ProviderArtifactStagingService artifactStaging;
    private final PaintingPoemResultValidator poemValidator;
    private final CreationProviderProperties providerProperties;
+   private final ObjectProvider<CatalogMediaService> catalogMedia;
 
    @Transactional(readOnly = true)
    public CreationInputMaterializer.MaterializedInput materialize(
@@ -117,13 +120,36 @@ public class CreationInputMaterializer {
    private CreationInputMaterializer.MaterializedInput imageInput(MediaAsset asset, WorkflowModality modality, PaintingMetadataContext metadata) {
       ProviderArtifact artifact = null;
 
-      try (InputStream input = this.mediaStorage.resolve(asset).resource().getInputStream()) {
+      try (InputStream input = this.openImageInput(asset)) {
          artifact = this.artifactStaging.stageInputImage(input, asset.getMimeType());
          return new CreationInputMaterializer.MaterializedInput(new ProviderImageInput(artifact, modality, metadata), artifact);
       } catch (IOException | RuntimeException exception) {
          this.closeQuietly(artifact);
-         throw invalidInput();
+         // Keep the internal cause for diagnosis; the worker still returns the
+         // same safe CREATION_INPUT_INVALID response, without paths or content.
+         throw new IllegalArgumentException("Creation input is unavailable or invalid", exception);
       }
+   }
+
+   private InputStream openImageInput(MediaAsset asset) throws IOException {
+      if ("CATALOG_REFERENCE".equals(asset.getSourceType())) {
+         CatalogMediaService catalog = this.catalogMedia.getIfAvailable();
+         if (catalog != null) {
+            // PostgreSQL catalog projections have logical keys, not files under
+            // the legacy picture root. Reuse the API's batch/revision resolver.
+            // An absent or invalid catalog object must not fall back to an old file.
+            CatalogMediaService.CatalogMediaContent content = catalog.find(asset.getPublicId())
+               .orElseThrow(CreationInputMaterializer::invalidInput);
+            if (!asset.getPublicId().equals(content.asset().publicId())
+               || asset.getSha256() == null || !asset.getSha256().equalsIgnoreCase(content.asset().contentSha256())
+               || asset.getFileSize() == null || asset.getFileSize() != content.size()
+               || asset.getMimeType() == null || !asset.getMimeType().equalsIgnoreCase(content.mimeType())) {
+               throw invalidInput();
+            }
+            return content.resource().getInputStream();
+         }
+      }
+      return this.mediaStorage.resolve(asset).resource().getInputStream();
    }
 
    private MediaAsset requireOwnedActiveImage(Long assetId, Long ownerId) {
@@ -238,7 +264,8 @@ public class CreationInputMaterializer {
       final MediaAssetStorageService mediaStorage,
       final ProviderArtifactStagingService artifactStaging,
       final PaintingPoemResultValidator poemValidator,
-      final CreationProviderProperties providerProperties
+      final CreationProviderProperties providerProperties,
+      final ObjectProvider<CatalogMediaService> catalogMedia
    ) {
       this.mediaAssets = mediaAssets;
       this.paintings = paintings;
@@ -247,6 +274,7 @@ public class CreationInputMaterializer {
       this.artifactStaging = artifactStaging;
       this.poemValidator = poemValidator;
       this.providerProperties = providerProperties;
+      this.catalogMedia = catalogMedia;
    }
 
    public record MaterializedInput(ProviderInput input, ProviderArtifact inputArtifact) implements AutoCloseable {

@@ -37,14 +37,20 @@ public class CatalogMediaService {
          .orElseThrow(CatalogMediaService::unavailable);
 
       try {
-         Path batchRoot = Path.of(configuredRoot.getRoot()).toRealPath(LinkOption.NOFOLLOW_LINKS);
+         Path batchRoot = Path.of(configuredRoot.getRoot()).toRealPath();
          Path imageRoot = batchRoot.resolve("images").resolve("original");
+         Path realImageRoot = imageRoot.toRealPath();
+         if (!realImageRoot.startsWith(batchRoot)) {
+            throw unavailable();
+         }
          Path relative = Path.of(asset.relativePath());
          if (!relative.isAbsolute() && !relative.normalize().startsWith("..")) {
             Path candidate = imageRoot.resolve(relative).normalize();
             if (candidate.startsWith(imageRoot) && !Files.isSymbolicLink(candidate) && Files.isRegularFile(candidate, LinkOption.NOFOLLOW_LINKS)) {
-               Path resolved = candidate.toRealPath(LinkOption.NOFOLLOW_LINKS);
-               if (!resolved.startsWith(imageRoot.toRealPath(LinkOption.NOFOLLOW_LINKS))) {
+               // Resolve intermediate links before containment checks and open
+               // the canonical file, not the original path through those links.
+               Path resolved = candidate.toRealPath();
+               if (!resolved.startsWith(realImageRoot)) {
                   throw unavailable();
                } else {
                   long size = Files.size(resolved);
