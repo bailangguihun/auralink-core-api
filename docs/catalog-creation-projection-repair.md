@@ -64,3 +64,59 @@ this repair; any later website exercise needs fresh operating approvals.
 An observed catalog UUID is not proof of a user's historical submitted UUID.
 Retain missing browser request evidence as unknown; do not invent its timestamp,
 workflow ID, payload, HTTP response or cause from title matching alone.
+
+## Bulk scope and future publication gate
+
+`scripts/catalog_projection_bulk.py coverage SNAPSHOT.json COVERAGE.json` is a
+read-only, offline gate over a current repeatable-read snapshot. The snapshot
+must include every current ACTIVE/READY canonical catalog record, all JPA
+paintings/assets and every projection ledger row. Exit 2 means the catalog is
+not fully Creation-ready. The report distinguishes VALID, FULLY_MISSING,
+PARTIAL and CONFLICT; a source-key, storage-key or ledger alias is a conflict,
+not permission to overwrite a row. Only FULLY_MISSING records may enter the
+bulk repair manifest. Partial/conflicting records require separate diagnosis.
+
+Gallery publication and image GET validation alone are insufficient. The
+previous approved importer publishes `catalog_*` and advances its current head,
+but its committed-snapshot verification does not cover the three compatibility
+tables. The earlier projection command is an explicit operation, not an import
+hook or database trigger. Reusing that import path can repeat the omission.
+Every future import/activation must therefore run this coverage gate before it
+is signed off as Creation-ready, then prepare/review any missing projection
+scope and rerun coverage after repair. Do not patch a frozen historical importer,
+silently add unapproved writes to its old approval, or enable the legacy CSV
+startup importer as a substitute. This new gate must be adopted in the next
+approved ingestion procedure; it is not retroactively installed by this PR.
+
+`prepare MANIFEST.json REPAIR.sql` renders one atomic transaction for all sorted
+records. Its `preservation` object binds the complete public-table inventory and
+count/SHA-256 of every existing row. The transaction checks these preimages and
+all canonical eligibility/media/revision/metadata predicates under bounded
+locks, inserts three sets, verifies complete new relations and unchanged old
+rows, then commits once. Changed scope, partial material, replay, canonical
+drift, new tables or historical mutation abort the whole transaction. Identity
+sequences may advance even on rollback; never reset or refund them.
+
+Use `catalog_projection_transaction.py` from the separately reviewed Deploy
+change for the coordinated execution. It reuses the installed CoreRuntime
+lease, existing Java/watchdog quiescence, consistency backup and unchanged-code
+resume. It does not install itself as a consumer module. Explicit approval binds
+the complete plan, source code, SQL, manifest, actual media files and preserved
+VMM records. A lost response is reconciled with READ ONLY pre/postimage checks;
+there is no second SQL submission and no database snapshot restoration.
+
+Additional targeted verification:
+
+```bash
+python3 -B -m unittest discover -s tests -p test_catalog_projection_bulk.py -v
+python3 -B tests/run_catalog_projection_bulk_postgres.py \
+  --fixture /absolute/new/bulk-fixture --pg-bin /usr/lib/postgresql/16/bin \
+  --pg-lib /usr/lib/x86_64-linux-gnu --port 55903 --jpa
+```
+
+The optional `--manifest /private/reviewed-manifest.json` rehearses actual public
+catalog metadata in the new disposable database. No credentials, production
+rows unrelated to catalog metadata, model, application scheduler or provider
+are used. The all-record JPA test checks every repaired UUID through the actual
+unchanged repository and resolver. Preserve failed fixture logs; a passing
+offline rehearsal is not production application or browser generation acceptance.
