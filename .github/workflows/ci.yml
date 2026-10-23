@@ -44,6 +44,21 @@ jobs:
       - name: Test and build production artifact
         run: mvn -B -ntp clean package
 
+      - name: Test catalog Creation projection preparation
+        run: python3 -B -m unittest discover -s tests -p 'test_catalog_creation_projection_repair.py' -v
+
+      - name: Test catalog projection with isolated PostgreSQL and actual JPA
+        run: |
+          if [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-16
+          fi
+          python3 -B tests/run_catalog_projection_postgres.py \
+            --fixture "$RUNNER_TEMP/catalog-projection-fixture" \
+            --pg-bin /usr/lib/postgresql/16/bin \
+            --pg-lib /usr/lib/x86_64-linux-gnu \
+            --port 55903
+
       - name: Test release candidate integrity and provenance
         run: python -m unittest discover -s tests -p 'test_core_release_candidate.py'
 
