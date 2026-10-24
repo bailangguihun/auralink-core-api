@@ -36,7 +36,8 @@ public class VmmManagedAdmission {
             throw new ProviderExecutionException(ProviderErrorCategory.PROVIDER_REJECTED, "Managed VMM duration is invalid");
          }
          gate.requireSubmission(endpoint.resolveGenerationEndpoint(), ownerId,
-            source.sourcePainting() == null ? null : source.sourcePainting().getId(), duration);
+            source.sourcePainting() == null ? null : source.sourcePainting().getId(),
+            source.sourceAsset() == null ? null : source.sourceAsset().getId(), duration);
       }
    }
 }

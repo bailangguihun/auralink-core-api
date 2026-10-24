@@ -38,6 +38,7 @@ class VmmManagedContractTest {
    final AtomicInteger posts = new AtomicInteger();
    final AtomicInteger gets = new AtomicInteger();
    final AtomicReference<String> mode = new AtomicReference<>("OPEN");
+   final AtomicBoolean uploadSupport = new AtomicBoolean(true);
    final AtomicBoolean ready = new AtomicBoolean(true), permitted = new AtomicBoolean(true), inFlight = new AtomicBoolean(), uncertain = new AtomicBoolean();
    final AtomicReference<String> response = new AtomicReference<>("OK");
    final AtomicReference<JsonNode> received = new AtomicReference<>();
@@ -76,7 +77,7 @@ class VmmManagedContractTest {
          if (!"test_only_012345678901234567890123456789".equals(exchange.getRequestHeaders().getFirst(VmmManagedGate.TOKEN_HEADER))) { send(exchange, 403, "{}"); return; }
          if ("BAD_STATUS".equals(response.get())) { send(exchange, 200, "{\"contract\":\"old-vmm\"}"); return; }
          send(exchange, 200, mapper.writeValueAsString(Map.of("contract", "artlive-vmm-managed-v1", "mode", mode.get(),
-            "model_ready", ready.get(), "dispatch_permitted", permitted.get(), "in_flight", inFlight.get(), "uncertain", uncertain.get())));
+            "model_ready", ready.get(), "dispatch_permitted", permitted.get(), "in_flight", inFlight.get(), "uncertain", uncertain.get(), "source_kinds", uploadSupport.get() ? List.of("CATALOG_PAINTING", "OWNED_UPLOAD") : List.of("CATALOG_PAINTING"))));
       });
       server.createContext("/api/generate_with_image", exchange -> {
          posts.incrementAndGet(); headers.set(exchange.getRequestHeaders()); received.set(mapper.readTree(exchange.getRequestBody()));
@@ -95,6 +96,24 @@ class VmmManagedContractTest {
       byte[] bytes = value.getBytes(java.nio.charset.StandardCharsets.UTF_8); exchange.getResponseHeaders().set("Content-Type", "application/json");
       exchange.sendResponseHeaders(code, bytes.length); try (var out = exchange.getResponseBody()) { out.write(bytes); }
    }
+   @Test void uploadUsesOnlyAssetNamespaceAndOldWrapperRefusesBeforePost() {
+      var upload = new VmmExecutionContext(7, 11, 22, 0, null, 44L);
+      uploadSupport.set(false);
+      assertThatThrownBy(() -> gate.requireSubmission(endpoint.resolveGenerationEndpoint(), 7, null, 44L, 3)).isInstanceOf(ApiV1Exception.class);
+      assertThatThrownBy(() -> client.generate(requestId, "data:image/png;base64,AQ==", 3, upload)).isInstanceOf(ProviderExecutionException.class);
+      assertThat(posts).hasValue(0);
+      uploadSupport.set(true);
+      assertThat(client.generate(requestId, "data:image/png;base64,AQ==", 3, upload)).isEqualTo("synthetic.wav");
+      assertThat(headers.get().getFirst("X-ArtLIVE-VMM-Source-Kind")).isEqualTo("OWNED_UPLOAD");
+      assertThat(headers.get().getFirst("X-ArtLIVE-VMM-Source-Asset-Id")).isEqualTo("44");
+      assertThat(headers.get().getFirst("X-ArtLIVE-VMM-Source-Painting-Id")).isNull();
+      mode.set("ACCEPTANCE");
+      assertThatThrownBy(() -> client.generate(requestId, "data:image/png;base64,AQ==", 10, upload)).isInstanceOf(ProviderExecutionException.class);
+      assertThat(posts).hasValue(1);
+      assertThatThrownBy(() -> new VmmExecutionContext(7,11,22,0,33L,44L)).isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> new VmmExecutionContext(7,11,22,0,null,null)).isInstanceOf(IllegalArgumentException.class);
+   }
+
    @Test void disabledRetainsLegacyWithoutTokenOrStatusRequests() {
       managed.setEnabled(false); managed.setTokenFile("missing");
       assertThat(endpoint.readiness().state()).isEqualTo(ProviderReadinessState.READY_FOR_CONTROLLED_EXECUTION);

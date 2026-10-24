@@ -66,6 +66,22 @@ jobs:
             --pg-lib /usr/lib/x86_64-linux-gnu \
             --port 55903 --jpa
 
+      - name: Check out pinned managed VMM interoperability fixture
+        uses: actions/checkout@v4
+        with:
+          repository: bailangguihun/auralink-deploy
+          ref: 2cf500ce6dcbdc66602b4a68f0058bcf06714e06
+          path: .managed-vmm-peer
+          persist-credentials: false
+
+      - name: Verify owned-upload PostgreSQL persistence and actual managed HTTP boundary
+        run: |
+          python3 -B tests/run_vmm_owned_upload_postgres.py \
+            --fixture "$RUNNER_TEMP/vmm-owned-upload-fixture" \
+            --pg-bin /usr/lib/postgresql/16/bin \
+            --pg-lib /usr/lib/x86_64-linux-gnu --port 55904 \
+            --vmm-fixture-source "$GITHUB_WORKSPACE/.managed-vmm-peer/tests/fixtures/managed_vmm_cpu_server.py"
+
       - name: Test release candidate integrity and provenance
         run: python -m unittest discover -s tests -p 'test_core_release_candidate.py'
 

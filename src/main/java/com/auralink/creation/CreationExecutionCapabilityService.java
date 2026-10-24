@@ -18,7 +18,7 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class CreationExecutionCapabilityService {
-   public static final String MUSIC_CATALOG_SOURCE_ONLY_REASON = "PAINTING_TO_MUSIC_REQUIRES_SINGLE_CATALOG_PAINTING_SOURCE";
+   public static final String MUSIC_DIRECT_SOURCE_ONLY_REASON = "PAINTING_TO_MUSIC_REQUIRES_SINGLE_DIRECT_PAINTING_SOURCE";
    private final WorkflowCapabilityRegistry workflowCapabilities;
    private final ProviderAdapterRegistry adapters;
    private final CreationExecutionProperties properties;
@@ -41,7 +41,7 @@ public class CreationExecutionCapabilityService {
 
    public void requireExecutionAvailable(WorkflowExecutionPreparer.PreparedWorkflow workflow, CreationSourceResolver.ResolvedSource source) {
       if (source == null) {
-         throw unavailable("PAINTING_TO_MUSIC_REQUIRES_SINGLE_CATALOG_PAINTING_SOURCE");
+         throw unavailable("PAINTING_TO_MUSIC_REQUIRES_SINGLE_DIRECT_PAINTING_SOURCE");
       }
 
       this.requireExecutionTransformCount(workflow.transforms().size());
@@ -49,6 +49,9 @@ public class CreationExecutionCapabilityService {
          workflow.transforms().stream().map(WorkflowExecutionPreparer.PreparedTransform::operation).toList(),
          workflow.sourceModality(),
          source.sourcePainting() != null && source.sourceAsset() == null
+            || source.sourcePainting() == null && source.sourceAsset() != null
+               && "USER_UPLOAD".equals(source.sourceAsset().getSourceType())
+               && "PAINTING".equals(source.sourceAsset().getSemanticType())
       );
 
       for (WorkflowExecutionPreparer.PreparedTransform transform : workflow.transforms()) {
@@ -63,10 +66,11 @@ public class CreationExecutionCapabilityService {
       try {
          source = WorkflowModality.valueOf(sourceModality);
       } catch (IllegalArgumentException | NullPointerException exception) {
-         throw unavailable("PAINTING_TO_MUSIC_REQUIRES_SINGLE_CATALOG_PAINTING_SOURCE");
+         throw unavailable("PAINTING_TO_MUSIC_REQUIRES_SINGLE_DIRECT_PAINTING_SOURCE");
       }
 
-      this.requireMusicWorkflowScope(operations, source, sourcePaintingId != null && sourceAssetId == null);
+      // Ownership, source type and bytes are revalidated by the materializer before SEND_STARTED.
+      this.requireMusicWorkflowScope(operations, source, (sourcePaintingId != null) != (sourceAssetId != null));
    }
 
    public void requireExecutionTransformCount(int transformCount) {
@@ -120,10 +124,10 @@ public class CreationExecutionCapabilityService {
          : new CreationExecutionCapabilityService.ExecutionAvailability(true, "READY_FOR_CONTROLLED_EXECUTION");
    }
 
-   private void requireMusicWorkflowScope(List<WorkflowOperation> operations, WorkflowModality sourceModality, boolean hasCatalogPainting) {
+   private void requireMusicWorkflowScope(List<WorkflowOperation> operations, WorkflowModality sourceModality, boolean hasDirectPainting) {
       if (operations != null && operations.contains(WorkflowOperation.PAINTING_TO_MUSIC)) {
-         if (operations.size() != 1 || sourceModality != WorkflowModality.PAINTING || !hasCatalogPainting) {
-            throw unavailable("PAINTING_TO_MUSIC_REQUIRES_SINGLE_CATALOG_PAINTING_SOURCE");
+         if (operations.size() != 1 || sourceModality != WorkflowModality.PAINTING || !hasDirectPainting) {
+            throw unavailable("PAINTING_TO_MUSIC_REQUIRES_SINGLE_DIRECT_PAINTING_SOURCE");
          }
       }
    }
@@ -141,7 +145,7 @@ public class CreationExecutionCapabilityService {
 
    private static ApiV1Exception unavailable(String reason) {
       String message = switch (reason) {
-         case "PAINTING_TO_MUSIC_REQUIRES_SINGLE_CATALOG_PAINTING_SOURCE" -> "本轮音乐创作仅支持从画廊选择一幅国画后直接生成音乐";
+         case "PAINTING_TO_MUSIC_REQUIRES_SINGLE_DIRECT_PAINTING_SOURCE" -> "音乐创作仅支持一幅画廊国画或本人上传国画直接生成音乐";
          case "CREATION_WORKFLOW_STEP_LIMIT_EXCEEDED" -> "当前流程的转换步骤超过本运行环境支持范围";
          default -> "创作操作当前不可执行";
       };

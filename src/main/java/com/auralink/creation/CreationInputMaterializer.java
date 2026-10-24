@@ -18,6 +18,7 @@ import com.auralink.repository.MediaAssetRepository;
 import com.auralink.repository.PaintingRepository;
 import com.auralink.service.media.MediaAssetStorageService;
 import com.auralink.workflow.WorkflowModality;
+import com.auralink.workflow.WorkflowOperation;
 import java.io.IOException;
 import java.io.InputStream;
 import org.springframework.beans.factory.ObjectProvider;
@@ -40,10 +41,12 @@ public class CreationInputMaterializer {
       CreationExecutionTransactionService.ClaimedCreationData creation, CreationExecutionTransactionService.StepData step
    ) {
       WorkflowModality expected = this.parseModality(step.inputModality());
-      return step.stepIndex() == 0 ? this.sourceInput(creation, expected) : this.intermediateInput(creation, step, expected);
+      boolean music = WorkflowOperation.PAINTING_TO_MUSIC.name().equals(step.operationCode());
+      if (music && step.stepIndex() != 0) throw invalidInput();
+      return step.stepIndex() == 0 ? this.sourceInput(creation, expected, music) : this.intermediateInput(creation, step, expected);
    }
 
-   private CreationInputMaterializer.MaterializedInput sourceInput(CreationExecutionTransactionService.ClaimedCreationData creation, WorkflowModality expected) {
+   private CreationInputMaterializer.MaterializedInput sourceInput(CreationExecutionTransactionService.ClaimedCreationData creation, WorkflowModality expected, boolean music) {
       WorkflowModality source = this.parseModality(creation.sourceModality());
       if (source != expected) {
          throw invalidInput();
@@ -54,7 +57,7 @@ public class CreationInputMaterializer {
             new ProviderTextInput(this.requireSafeText(creation.sourceText()), source), null
          );
          case IMAGE -> this.imageInput(this.requireOwnedActiveImageSource(creation.sourceAssetId(), creation.ownerId()), WorkflowModality.IMAGE, null);
-         case PAINTING -> this.paintingSourceInput(creation);
+         case PAINTING -> this.paintingSourceInput(creation, music);
          default -> throw invalidInput();
       };
    }
@@ -107,21 +110,31 @@ public class CreationInputMaterializer {
       );
    }
 
-   private CreationInputMaterializer.MaterializedInput paintingSourceInput(CreationExecutionTransactionService.ClaimedCreationData creation) {
+   private CreationInputMaterializer.MaterializedInput paintingSourceInput(CreationExecutionTransactionService.ClaimedCreationData creation, boolean music) {
       if (creation.sourcePaintingId() != null && creation.sourceAssetId() == null) {
          return this.paintingInput(this.requireOfficialPainting(creation.sourcePaintingId()));
       } else if (creation.sourcePaintingId() == null && creation.sourceAssetId() != null) {
-         return this.imageInput(this.requireOwnedActivePainting(creation.sourceAssetId(), creation.ownerId()), WorkflowModality.PAINTING, null);
+         MediaAsset asset = this.requireOwnedActivePainting(creation.sourceAssetId(), creation.ownerId());
+         if (music && !"USER_UPLOAD".equals(asset.getSourceType())) throw invalidInput();
+         return this.imageInput(asset, WorkflowModality.PAINTING, null, music);
       } else {
          throw invalidInput();
       }
    }
 
    private CreationInputMaterializer.MaterializedInput imageInput(MediaAsset asset, WorkflowModality modality, PaintingMetadataContext metadata) {
+      return this.imageInput(asset, modality, metadata, false);
+   }
+
+   private CreationInputMaterializer.MaterializedInput imageInput(MediaAsset asset, WorkflowModality modality, PaintingMetadataContext metadata, boolean verifyUpload) {
       ProviderArtifact artifact = null;
 
       try (InputStream input = this.openImageInput(asset)) {
          artifact = this.artifactStaging.stageInputImage(input, asset.getMimeType());
+         if (verifyUpload && (asset.getSha256() == null || !asset.getSha256().equals(artifact.sha256())
+            || asset.getFileSize() == null || asset.getFileSize() != artifact.byteLength()
+            || !java.util.Objects.equals(asset.getWidth(), artifact.width())
+            || !java.util.Objects.equals(asset.getHeight(), artifact.height()))) throw invalidInput();
          return new CreationInputMaterializer.MaterializedInput(new ProviderImageInput(artifact, modality, metadata), artifact);
       } catch (IOException | RuntimeException exception) {
          this.closeQuietly(artifact);
