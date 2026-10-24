@@ -29,7 +29,7 @@ class OwnedUploadMusicSourceTest {
    @Test void ownedUploadPersistsRealAssetAndCrossUserAndChainsRemainRejected() throws Exception {
       var config = new Configuration();
       for (var type : List.of(User.class, MediaAsset.class, Painting.class, UserWorkflow.class, Creation.class,
-                             CreationStep.class, CreationExecutionAttempt.class)) config.addAnnotatedClass(type);
+                             CreationStep.class, CreationExecutionAttempt.class, CreationStepDispatchAttempt.class)) config.addAnnotatedClass(type);
       String postgres = System.getProperty("owned.upload.jdbc");
       if (postgres != null) {
          assertThat(postgres).matches("jdbc:postgresql://127\\.0\\.0\\.1:[0-9]+/owned_upload_test");
@@ -82,7 +82,7 @@ class OwnedUploadMusicSourceTest {
          assertThatThrownBy(() -> capability.requireExecutionAvailable(prepared, resolved)).isInstanceOf(ApiV1Exception.class);
          asset.setSourceType("USER_UPLOAD");
          assertThatThrownBy(() -> capability.requireExecutionAvailable(List.of(WorkflowOperation.TEXT_TO_PAINTING, WorkflowOperation.PAINTING_TO_MUSIC), "TEXT_DESCRIPTION", null, asset.getId())).isInstanceOf(ApiV1Exception.class);
-         var current = mock(CurrentUserService.class); when(current.requireCurrentUser()).thenReturn(owner);
+         var current = mock(CurrentUserService.class); when(current.requireCurrentUser()).thenReturn(owner);when(current.findCurrentUser()).thenReturn(java.util.Optional.of(owner));
          var preparer = mock(WorkflowExecutionPreparer.class); when(preparer.prepare(wf.getPublicId(), owner)).thenReturn(prepared);
          var beans = new DefaultListableBeanFactory();
          var service = new CreationSubmissionService(mock(CreationFeatureGuard.class), new CreationExecutionProperties(), current, preparer,
@@ -99,7 +99,49 @@ class OwnedUploadMusicSourceTest {
          assertThat(steps.findByCreationIdOrderByStepIndexAsc(saved.getId())).hasSize(1);
          assertThat(creations.count()).isEqualTo(1); assertThat(paintings.count()).isZero();
          verify(adapter, never()).execute(any());
+         // Real unchanged result persistence must also work with a null catalog source.
+         saved.setStatus("RUNNING"); saved.setClaimToken("isolated-claim");
+         var musicStep=steps.findByCreationIdOrderByStepIndexAsc(saved.getId()).get(0);
+         musicStep.setStatus("RUNNING");musicStep.setProviderDispatchState("SEND_STARTED");musicStep.setProviderRequestKey("isolated-dispatch");
+         var attempt=attempts.findByCreationIdAndFinishedAtIsNull(saved.getId()).orElseThrow();
+         var dispatch=CreationStepDispatchAttempt.builder().creationStep(musicStep).creationExecutionAttempt(attempt)
+            .providerRequestKey("isolated-dispatch").dispatchState("SEND_STARTED").build();
+         em.persist(dispatch);em.flush();
+         Long cid=saved.getId(),sid=musicStep.getId(),inputId=saved.getSourceAsset().getId();
+         var mediaProperties=new MediaAssetProperties();mediaProperties.setManagedDir(temp.resolve("managed").toString());
+         var storage=new com.auralink.service.media.MediaAssetStorageService(mediaProperties,
+            new com.auralink.service.media.MediaAssetStorageResolver(mediaProperties,new PaintingProperties()));
+         var images=new com.auralink.service.media.ImageContentValidator(mediaProperties);
+         var mediaService=new com.auralink.service.media.MediaAssetService(assets,repositories.getRepository(UserRepository.class),current,
+            new com.auralink.security.access.MediaAssetAccessPolicy(),storage,images,mediaProperties);
+         var audio=new com.auralink.provider.artifact.AudioOutputValidator();
+         var providerProperties=new CreationProviderProperties();providerProperties.setStagingDir(temp.resolve("staging"));
+         var staging=new com.auralink.provider.artifact.ProviderArtifactStagingService(providerProperties,images,audio);
+         var persistence=new CreationResultPersistenceService(creations,steps,attempts,repositories.getRepository(CreationStepDispatchAttemptRepository.class),
+            mediaService,audio,mock(com.auralink.provider.qwen.PaintingPoemResultValidator.class),mapper,new CreationExecutionProperties(),Clock.systemUTC(),boundary -> {});
+         byte[] wave=wave();
+         try(var artifact=staging.stageOutputWave(new java.io.ByteArrayInputStream(wave))) {
+            persistence.persistMusic(new CreationExecutionTransactionService.ClaimedCreationData(cid,"isolated-claim",ownerId,"{}","PAINTING",null,inputId,null,0),
+               new CreationExecutionTransactionService.StepData(sid,0,"step1","PAINTING_TO_MUSIC","auralink-vmm","PAINTING","AUDIO","RUNNING",1,"SEND_STARTED"),
+               new ProviderBinaryOutput(artifact),3,true);
+         }
+         em.getTransaction().commit();em.clear();em.getTransaction().begin();
+         var complete=creations.findByPublicIdAndUserId(creationId,ownerId).orElseThrow();
+         assertThat(complete.getStatus()).isEqualTo("SUCCEEDED");assertThat(complete.getSourceAsset().getPublicId()).isEqualTo(assetId);
+         assertThat(complete.getSourcePainting()).isNull();assertThat(complete.getFinalAsset().getOwnerUser().getId()).isEqualTo(ownerId);
+         assertThat(complete.getFinalAsset().getVisibility()).isEqualTo("PRIVATE");assertThat(complete.getFinalAsset().getDurationSeconds()).isEqualTo(3.0);
+         String resultId=complete.getFinalAsset().getPublicId();
+         assertThat(mediaService.getAccessibleContent(resultId).resource().getContentAsByteArray()).isEqualTo(wave);
+         when(current.requireCurrentUser()).thenReturn(other);
+         when(current.findCurrentUser()).thenReturn(java.util.Optional.of(other));
+         assertThatThrownBy(() -> mediaService.getAccessibleContent(resultId)).isInstanceOf(ApiV1Exception.class);
+         assertThat(creations.count()).isEqualTo(1);assertThat(assets.count()).isEqualTo(2);assertThat(paintings.count()).isZero();
          em.getTransaction().commit();
       }
+   }
+   private static byte[] wave() {
+      int size=3*8000*2;var b=java.nio.ByteBuffer.allocate(44+size).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+      b.put("RIFF".getBytes()).putInt(36+size).put("WAVEfmt ".getBytes()).putInt(16).putShort((short)1).putShort((short)1);
+      b.putInt(8000).putInt(16000).putShort((short)2).putShort((short)16).put("data".getBytes()).putInt(size);return b.array();
    }
 }

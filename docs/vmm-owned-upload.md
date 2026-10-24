@@ -21,7 +21,7 @@ The wrapper reports `source_kinds` in authenticated status. Core refuses upload 
 
 - `VmmManagedContractTest`: real Core HTTP adapter and old-wrapper refusal, typed headers, acceptance isolation, duration/UNKNOWN behavior.
 - `CreationCatalogInputMaterializerTest`: actual private storage/image staging, owned upload and invalid owner/media/hash/size/dimensions/symlink rejection, unchanged catalog resolution.
-- `OwnedUploadMusicSourceTest`: actual JPA resolver + submission persistence + ownership query, both SQLite and disposable PostgreSQL; no provider invocation.
+- `OwnedUploadMusicSourceTest`: actual JPA resolver, submission and music-result persistence, real private audio storage/readback and cross-user denial, both SQLite and disposable PostgreSQL; no provider invocation.
 - `VmmOwnedUploadBoundaryTest`: actual Core adapter → reviewed Deploy ManagedService over loopback HTTP, synthetic CPU WAV backend only; upload ledger, replay refusal and catalog success. Explicit `vmm.fixture.source` binds the peer test fixture.
 - `tests/run_vmm_owned_upload_postgres.py`: disposable PostgreSQL, always stopped, explicit new fixture directory, no production connection.
 
