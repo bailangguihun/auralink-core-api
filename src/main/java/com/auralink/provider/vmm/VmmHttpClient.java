@@ -66,7 +66,14 @@ public class VmmHttpClient {
                headers.set("X-ArtLIVE-VMM-Creation-Id", Long.toString(context.creationId()));
                headers.set("X-ArtLIVE-VMM-Step-Id", Long.toString(context.stepId()));
                headers.set("X-ArtLIVE-VMM-Retry-Version", Integer.toString(context.retryVersion()));
-               headers.set("X-ArtLIVE-VMM-Source-Painting-Id", context.sourcePaintingId().toString());
+               headers.set("X-ArtLIVE-VMM-Source-Kind", context.sourceKind());
+               if (context.sourcePaintingId() != null) {
+                  headers.set("X-ArtLIVE-VMM-Source-Painting-Id", context.sourcePaintingId().toString());
+                  headers.remove("X-ArtLIVE-VMM-Source-Asset-Id");
+               } else {
+                  headers.set("X-ArtLIVE-VMM-Source-Asset-Id", context.sourceAssetId().toString());
+                  headers.remove("X-ArtLIVE-VMM-Source-Painting-Id");
+               }
             }).build();
          }
          try {

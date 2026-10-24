@@ -239,7 +239,7 @@ public class CreationWorker {
             ProviderExecutionResult result = adapter.execute(
                new ProviderExecutionRequest(requestKey.get(), snapshotStep.operation(), snapshotStep.providerCode(), input.input(), snapshotStep.parameters(),
                   snapshotStep.operation() == WorkflowOperation.PAINTING_TO_MUSIC
-                     ? new VmmExecutionContext(creation.ownerId(), creation.creationId(), step.stepId(), creation.retryVersion(), creation.sourcePaintingId())
+                     ? new VmmExecutionContext(creation.ownerId(), creation.creationId(), step.stepId(), creation.retryVersion(), creation.sourcePaintingId(), creation.sourceAssetId())
                      : null)
             );
             providerReturned = true;
