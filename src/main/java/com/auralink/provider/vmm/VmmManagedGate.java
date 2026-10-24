@@ -50,9 +50,13 @@ public class VmmManagedGate {
    }
 
    public void requireSubmission(URI endpoint, long ownerId, Long paintingId, int duration) {
+      requireSubmission(endpoint, ownerId, paintingId, null, duration);
+   }
+
+   public void requireSubmission(URI endpoint, long ownerId, Long paintingId, Long assetId, int duration) {
       if (!enabled()) return;
       try {
-         requireAllowed(status(endpoint), ownerId, paintingId, duration);
+         requireAllowed(status(endpoint), ownerId, paintingId, assetId, duration);
       } catch (ProviderExecutionException exception) {
          throw new ApiV1Exception(HttpStatus.CONFLICT, ApiErrorCode.CREATION_OPERATION_UNAVAILABLE,
             "音乐服务未开放派发，或本次请求不属于受控验收范围");
@@ -62,11 +66,12 @@ public class VmmManagedGate {
    public void requireDispatch(URI endpoint, VmmExecutionContext context, int duration) {
       if (!enabled()) return;
       if (context == null) throw invalid("Managed VMM execution identity is required");
-      requireAllowed(status(endpoint), context.ownerId(), context.sourcePaintingId(), duration);
+      requireAllowed(status(endpoint), context.ownerId(), context.sourcePaintingId(), context.sourceAssetId(), duration);
    }
 
-   private void requireAllowed(Status status, long ownerId, Long paintingId, int duration) {
+   private void requireAllowed(Status status, long ownerId, Long paintingId, Long assetId, int duration) {
       if (!status.permitted()) throw unavailable();
+      if ((paintingId == null) == (assetId == null) || assetId != null && !status.uploadsSupported()) throw unavailable();
       if ("ACCEPTANCE".equals(status.mode()) &&
          (!Long.valueOf(ownerId).equals(properties.getAcceptanceOwnerId()) || paintingId == null ||
           !paintingId.equals(properties.getAcceptanceSourcePaintingId()) ||
@@ -127,7 +132,9 @@ public class VmmManagedGate {
              !Set.of("CLOSED", "ACCEPTANCE", "OPEN").contains(root.path("mode").asText())) throw unavailable();
          return new Status(root.path("mode").asText(), root.path("model_ready").booleanValue() &&
             root.path("dispatch_permitted").booleanValue() && !root.path("in_flight").booleanValue() &&
-            !root.path("uncertain").booleanValue() && !"CLOSED".equals(root.path("mode").asText()));
+            !root.path("uncertain").booleanValue() && !"CLOSED".equals(root.path("mode").asText()),
+            root.path("source_kinds").isArray() && java.util.stream.StreamSupport.stream(root.path("source_kinds").spliterator(), false)
+               .anyMatch(value -> value.isTextual() && "OWNED_UPLOAD".equals(value.textValue())));
       } catch (ProviderExecutionException exception) {
          throw exception;
       } catch (Exception exception) {
@@ -143,5 +150,5 @@ public class VmmManagedGate {
    private ProviderExecutionException unavailable() {
       return new ProviderExecutionException(ProviderErrorCategory.PROVIDER_UNAVAILABLE, "Managed VMM is not ready for dispatch");
    }
-   private record Status(String mode, boolean permitted) { }
+   private record Status(String mode, boolean permitted, boolean uploadsSupported) { }
 }

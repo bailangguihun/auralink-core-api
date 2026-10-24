@@ -285,6 +285,53 @@ class CreationCatalogInputMaterializerTest {
       assertNoStagedFiles();
    }
 
+   @Test void ownedUploadedPaintingIsValidatedAndStagedWithoutCatalogIdentity() throws Exception {
+      var asset = uploadedPainting();
+      try (var context = context(true);
+           var input = context.getBean(CreationInputMaterializer.class).materialize(source("PAINTING", 102L, null), step(0, "PAINTING"))) {
+         var image = (ProviderImageInput) input.input();
+         assertArtifact(image.artifact(), image("png"), "image/png");
+         assertThat(image.paintingMetadata()).isNull();
+         verifyNoInteractions(catalog, paintings);
+      }
+      assertThat(Files.readAllBytes(managedRoot.resolve("private.png"))).isEqualTo(image("png"));
+      assertNoStagedFiles();
+   }
+
+   @ParameterizedTest @ValueSource(strings={"owner", "status", "visibility", "type", "semantic", "generated", "hash", "size", "width", "mime", "invalid", "symlink"})
+   void invalidOwnedUploadIsRejectedBeforeAnyProviderCall(String fault) throws Exception {
+      var asset = uploadedPainting();
+      switch (fault) {
+         case "owner" -> asset.setOwnerUser(User.builder().id(8L).build());
+         case "status" -> asset.setStatus("DELETED");
+         case "visibility" -> asset.setVisibility("PUBLIC");
+         case "type" -> asset.setAssetType("AUDIO");
+         case "semantic" -> asset.setSemanticType("GENERATED_PAINTING");
+         case "generated" -> asset.setSourceType("GENERATED");
+         case "hash" -> asset.setSha256("0".repeat(64));
+         case "size" -> asset.setFileSize(1L);
+         case "width" -> asset.setWidth(999);
+         case "mime" -> asset.setMimeType("image/jpeg");
+         case "invalid" -> Files.writeString(managedRoot.resolve("private.png"), "not an image");
+         case "symlink" -> { Files.delete(managedRoot.resolve("private.png")); Files.createSymbolicLink(managedRoot.resolve("private.png"), Path.of("/etc/passwd")); }
+      }
+      try (var context = context(true)) {
+         assertThatThrownBy(() -> context.getBean(CreationInputMaterializer.class).materialize(source("PAINTING", 102L, null), step(0, "PAINTING")))
+            .isInstanceOf(RuntimeException.class);
+      }
+      verifyNoInteractions(catalog, paintings);
+      assertNoStagedFiles();
+   }
+
+   private MediaAsset uploadedPainting() throws Exception {
+      var asset = privateAsset("USER_UPLOAD", "PAINTING");
+      byte[] bytes = image("png");
+      asset.setSha256(sha(bytes)); asset.setFileSize((long)bytes.length); asset.setWidth(3); asset.setHeight(2);
+      Files.write(managedRoot.resolve("private.png"), bytes);
+      when(assets.findById(102L)).thenReturn(Optional.of(asset));
+      return asset;
+   }
+
    private AnnotationConfigApplicationContext context(boolean withCatalog) {
       var media = new MediaAssetProperties(); media.setManagedDir(managedRoot.toString());
       var painting = new PaintingProperties(); painting.setPictureDir(legacyRoot.toString());
@@ -342,7 +389,7 @@ class CreationCatalogInputMaterializerTest {
    }
 
    private static StepData step(int index, String modality) {
-      return new StepData(11L, index, "step" + (index + 1), "PAINTING_TO_MUSIC", "auralink-vmm", modality, "AUDIO", "RUNNING", 1, "NOT_SENT");
+      return new StepData(11L, index, "step" + (index + 1), index == 0 && "PAINTING".equals(modality) ? "PAINTING_TO_MUSIC" : "PAINTING_TO_POEM", "auralink-vmm", modality, "AUDIO", "RUNNING", 1, "NOT_SENT");
    }
 
    private static byte[] image(String format) throws Exception {

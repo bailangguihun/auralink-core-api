@@ -34,7 +34,7 @@ public record WorkflowOperationCapabilityResponse(
          execution.available(),
          capability.terminalOutput(),
          execution.reason(),
-         capability.operation() == WorkflowOperation.PAINTING_TO_MUSIC ? "CATALOG_PAINTING_SINGLE_TRANSFORM_ONLY" : null,
+         capability.operation() == WorkflowOperation.PAINTING_TO_MUSIC ? "CATALOG_OR_OWNED_UPLOAD_PAINTING_SINGLE_TRANSFORM_ONLY" : null,
          capability.providers().stream().map(provider -> WorkflowProviderCapabilityResponse.from(provider, execution.available())).toList()
       );
    }
