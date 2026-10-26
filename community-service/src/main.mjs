@@ -20,7 +20,12 @@ let closing = false;
 async function close() {
   if (closing) return;
   closing = true;
-  server.close(async () => { await database.close(); });
+  console.log(JSON.stringify({ event: 'community_draining' }));
+  // No forced exit, retry or transaction replay. The lifecycle owner reports
+  // STOPPING if its observation deadline elapses; it must not claim STOPPED.
+  await server.drain();
+  await database.close();
+  console.log(JSON.stringify({ event: 'community_stopped' }));
 }
 process.on('SIGTERM', close);
 process.on('SIGINT', close);
