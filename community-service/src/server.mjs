@@ -28,7 +28,11 @@ function pageQuery(url, allowed = ['page', 'size']) {
   return { page, size };
 }
 export function createCommunityServer({ store, core, allowedOrigin, logger = console }) {
-  return http.createServer({ requestTimeout: 15000, headersTimeout: 10000, maxHeaderSize: 16384 }, async (req, res) => {
+  let active = 0, draining = false;
+  const idleWaiters = new Set();
+  const server = http.createServer({ requestTimeout: 15000, headersTimeout: 10000, maxHeaderSize: 16384 }, async (req, res) => {
+    if (draining) return reply(res, 503, { code: 'COMMUNITY_DRAINING', message: '社区维护中，请稍后再来。' });
+    active++;
     const correlationId = randomUUID();
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
@@ -107,6 +111,21 @@ export function createCommunityServer({ store, core, allowedOrigin, logger = con
         message: known ? error.message : '请求结果尚未确认，请读取操作记录，不要重复提交。',
         correlationId,
       });
+    } finally {
+      active--;
+      if (active === 0) { for (const resolve of idleWaiters) resolve(); idleWaiters.clear(); }
     }
   });
+  // HTTP disconnect is not cancellation of a database transaction. Keep tracking
+  // the handler until it finishes, even if server.close has no sockets left.
+  let closing;
+  server.drain = () => {
+    if (closing) return closing;
+    draining = true;
+    const idle = active === 0 ? Promise.resolve() : new Promise(resolve => idleWaiters.add(resolve));
+    const sockets = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    closing = Promise.all([idle, sockets]);
+    return closing;
+  };
+  return server;
 }

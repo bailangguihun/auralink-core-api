@@ -1,6 +1,6 @@
 # ArtLIVE community foundation
 
-Status: first isolated implementation candidate; not an installed production
+Status: integration and publication candidate; not an installed production
 service. Core JWT validation now checks current account status before accepting
 an existing token. Core migrations, VMM and existing data remain unchanged.
 
@@ -125,6 +125,26 @@ managed lifecycle are ready. No default credentials, seeds, providers or GPU
 initialization are present.
 
 ## Remaining acceptance
+
+`npm run test:core` requires a fresh native `community_core_fixture` database
+and the actual built Core JAR. CI starts the JAR through the existing
+LocalPrivateRehearsalLauncher, retaining its maintenance fence inside the
+private fixture workspace. No production fence is disabled. It uses real
+register/login/profile/gallery routes, two canonical accounts, a separate
+Community Node process, account restrictions, duplicate writes, source
+withdrawal and persistence across graceful process restart. It also aborts an
+HTTP response while a real PostgreSQL write sleeps and verifies the committed
+journal after SIGTERM. Default tests remain explicitly fixture based.
+
+Shutdown stops new admission and waits for handlers even after their clients
+disconnect. An external stop deadline does not authorize forced termination
+or a duplicate write. Read the operation journal after restart.
+
+The package-only Community workflow binds the release/run, production npm
+lockfile and every shipped file in a deterministic ZIP. It runs no SSH, SQL,
+install hook or production command. Node itself is not included: the installed
+runtime executable/version must be bound separately. This workflow is separate
+from the existing Core JAR publisher and cannot install the new service.
 
 Core JAR publication cannot install this Node process. Web deployment must
 preserve its new server-only setting. The matching Deploy proposal describes
