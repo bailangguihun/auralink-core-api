@@ -1,0 +1,15 @@
+{
+  "V001__catalog_contract.sql": "59f7f788f17fe68da8aa8b92c88de0cd71eaed3304116435752855cfe90dbe53",
+  "V002__catalog_users_and_favorites.sql": "6ac1175601354059cf385e1054af3d99ae6bacd6013013539054e42c738800cc",
+  "V003__private_assets_and_critic_tasks.sql": "2d9a8e37bdfbb8b949e18d8e31b2b622f0ce459b479b930b929465dc73673ce2",
+  "V004__painting_guides.sql": "fc52fab82583bedd99ba03710bad675be511c491aa7a5d375b0e3070513169b7",
+  "V005__guide_attempt_history_retry_policy.sql": "9e04d4e74f74603b2d8671b3cfae752654ea52f193e4f66ac3e153bce725de5e",
+  "V006__creation_workflows_and_jpa_compatibility.sql": "9808de1458c9b4b788e2b110a90a68f0e1198c96c49d233c47d79484ecc7a05d",
+  "V007__creation_legacy_asset_provenance.sql": "14c8b21cccd3bb64965c8591ff8c27036cb3bc43cd11b80f6b02713b45423d4e",
+  "V008__creation_catalog_input_snapshots.sql": "a19c6e4c2bd577c9058fca6838d74fbf7a2a7551045ec7c46c95c043eca47646",
+  "V009__unified_rehearsal_import_state.sql": "57264d52a9849c031a714177e23911d773113af94c65faff9e8df1d8ebd10cc6",
+  "V010__allow_audited_unified_noop_reruns.sql": "c8635cff75eefa65d402c41f8a4b790a1ebafb10e6503c6af7182a6eb9a27f1a",
+  "V011__r24_legacy_media_provenance.sql": "b08ef32fac1a434f16b56c897e57a1d635c3acadd79ed66b1deac388243e1ab2",
+  "V012__annotation_value_hash_index.sql": "38c3e10cef383e723c390d73ac97df00670711fe9cedfa39299c4b98e1bf853d",
+  "V013__r24_legacy_catalog_import_history.sql": "5b9213b6c58bdfb2fa1592ed19dc32a98fba1d94238b1e7c6270338819cb3e5d"
+}
