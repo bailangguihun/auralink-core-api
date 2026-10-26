@@ -202,7 +202,9 @@ public class PaintingQueryService {
          return this.responseMapper.toDetail(painting, favorited);
       } else {
          String canonicalId = this.requireCanonicalUuid(paintingId);
-         CatalogReadStore.CatalogPainting painting = catalogReadStore.findPainting(canonicalId).orElseThrow(PaintingQueryService::paintingNotFound);
+         CatalogReadStore.CatalogPainting painting = catalogReadStore.findPainting(canonicalId)
+            .filter(value -> "ACTIVE".equals(value.catalogStatus()))
+            .orElseThrow(PaintingQueryService::paintingNotFound);
          CatalogAuthStore catalogAuthStore = (CatalogAuthStore)this.catalogAuthStoreProvider.getIfAvailable();
          return this.catalogDetail(painting, catalogAuthStore != null && catalogAuthStore.isFavorited(user.getId(), canonicalId));
       }

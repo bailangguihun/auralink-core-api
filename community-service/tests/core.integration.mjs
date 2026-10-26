@@ -76,7 +76,7 @@ test('actual Core identity/gallery and native Community process interoperability
   const media = join(dir, 'media'); await mkdir(media, { mode: 0o700 }); await writeFile(join(media, 'fixture.png'), png);
   await admin.query('INSERT INTO catalog_batch_current_revisions VALUES($1,1)', [batch]);
   await admin.query("INSERT INTO catalog_source_records VALUES($1,1,'fixture',1,$2,'community-fixture','VALID')", [batch, paintingId]);
-  await admin.query("INSERT INTO catalog_media_assets VALUES($1,$2,1,'fixture.png','fixture.png',$3,'READY')", [asset,batch,createHash('sha256').update(png).digest('hex')]);
+  await admin.query("INSERT INTO catalog_media_assets VALUES($1,$2,1,'fixture.png','fixture.png',$3,'ACTIVE')", [asset,batch,createHash('sha256').update(png).digest('hex')]);
   await admin.query("INSERT INTO catalog_paintings VALUES($1,$2,1,'真实 Core 隔离山水','测试作者','山水','ACTIVE','READY',$3)", [paintingId,batch,asset]);
   await admin.query("INSERT INTO catalog_annotation_field_definitions VALUES($1,1,'fixture','source.original_image_reference','私有路径','text',NULL,'source',1,'hidden','none','private')", [batch]);
   await admin.query("INSERT INTO catalog_annotation_revisions VALUES($1,1,'fixture',1,'source.original_image_reference','DO_NOT_EXPOSE','DO_NOT_EXPOSE','PRESENT','UNSPECIFIED')", [batch]);
@@ -143,7 +143,13 @@ test('actual Core identity/gallery and native Community process interoperability
     return { status:r.status,data:await r.json() };
   }
   await startCommunity();
-  await t.test('canonical platform accounts and current restrictions',async()=>{
+  let failures = 0;
+  async function scenario(name, work) {
+    await t.test(name, async () => {
+      try { await work(); } catch (error) { failures++; throw error; }
+    });
+  }
+  await scenario('canonical platform accounts and current restrictions',async()=>{
     for(const account of accounts) assert.equal((await request('/capabilities',{token:account.token})).data.actor.id,String(account.userId));
     for(const field of ['enabled','account_non_locked','account_non_expired','credentials_non_expired']) {
       await admin.query('UPDATE catalog_users SET '+field+'=false WHERE id=$1',[a.userId]);
@@ -157,7 +163,7 @@ test('actual Core identity/gallery and native Community process interoperability
     assert.equal((await request('/capabilities',{token:'invalid'})).status,401);
   });
   let postId, requestId;
-  await t.test('real gallery references, writes, duplicate requests and owner isolation',async()=>{
+  await scenario('real gallery references, writes, duplicate requests and owner isolation',async()=>{
     requestId=randomUUID();
     const command={requestId,content:'真实 Core 与社区联调',galleryArtworkId:paintingId};
     const replies=await Promise.all(Array.from({length:4},()=>request('/posts',{method:'POST',body:command})));
@@ -171,15 +177,16 @@ test('actual Core identity/gallery and native Community process interoperability
     const got=await request('/posts/'+postId);assert.equal(got.data.commentCount,1);assert.equal(got.data.likeCount,1);
     assert.equal(got.data.galleryReference.state,'AVAILABLE');assert(!JSON.stringify(got).includes('DO_NOT_EXPOSE'));
   });
-  await t.test('source withdrawal and missing images prevent new publication',async()=>{
+  await scenario('source withdrawal and missing images prevent new publication',async()=>{
     for(const [field,value,restore] of [['catalog_status','INACTIVE','ACTIVE'],['image_display_status','MISSING','READY']]) {
       await admin.query('UPDATE catalog_paintings SET '+field+'=$1 WHERE public_id=$2',[value,paintingId]);
-      assert.equal((await request('/posts/'+postId)).data.galleryReference.state,'UNAVAILABLE');
-      assert.equal((await request('/posts',{method:'POST',body:{requestId:randomUUID(),content:'不可引用',galleryArtworkId:paintingId}})).status,404);
-      await admin.query('UPDATE catalog_paintings SET '+field+'=$1 WHERE public_id=$2',[restore,paintingId]);
+      try {
+        assert.equal((await request('/posts/'+postId)).data.galleryReference.state,'UNAVAILABLE');
+        assert.equal((await request('/posts',{method:'POST',body:{requestId:randomUUID(),content:'不可引用',galleryArtworkId:paintingId}})).status,404);
+      } finally { await admin.query('UPDATE catalog_paintings SET '+field+'=$1 WHERE public_id=$2',[restore,paintingId]); }
     }
   });
-  await t.test('lost response and SIGTERM drain preserve a committed journal across process restart',async()=>{
+  await scenario('lost response and SIGTERM drain preserve a committed journal across process restart',async()=>{
     await admin.query("CREATE FUNCTION community.fixture_pause() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(2); RETURN NEW; END $$");
     await admin.query('CREATE TRIGGER fixture_pause BEFORE INSERT ON community.posts FOR EACH ROW EXECUTE FUNCTION community.fixture_pause()');
     const pending=randomUUID(), abort=new AbortController();
@@ -194,7 +201,7 @@ test('actual Core identity/gallery and native Community process interoperability
     assert.equal((await request('/operations/'+requestId)).data.result.postId,postId);
     assert.equal((await request('/posts/'+postId)).data.commentCount,1);
   });
-  await t.test('read requests do not change existing platform or community data',async()=>{
+  await scenario('read requests do not change existing platform or community data',async()=>{
     async function snapshot() {
       const tables=(await admin.query("SELECT schemaname,tablename FROM pg_tables WHERE schemaname IN ('public','community') ORDER BY 1,2")).rows;
       return Promise.all(tables.map(async r=>[r.schemaname,r.tablename,(await admin.query('SELECT row_to_json(t)::text AS row FROM '+r.schemaname+'.'+r.tablename+' t ORDER BY row_to_json(t)::text')).rows]));
@@ -205,6 +212,7 @@ test('actual Core identity/gallery and native Community process interoperability
     assert.deepEqual((await admin.query('SELECT * FROM users')).rows,[{id:'1',username:'community_fixture_a'}]);
   });
   await stop(community);await stop(core);
+  assert.equal(failures,0,'Do not emit PASS evidence when any nested assertion failed');
   await writeFile(join(dir,'RESULT.json'),JSON.stringify({status:'PASS',coreJarSha256:jarSha,core:'actual Spring Boot JAR',database:'native PostgreSQL',
     community:'separate actual Node process',subtests:5,accountIds:accounts.map(a=>a.userId),communityStarts:launchCount,providerCalls:0,productionConnections:0},null,2));
 });
