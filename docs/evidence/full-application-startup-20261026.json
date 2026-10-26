@@ -1,0 +1,73 @@
+{
+  "scope": "isolated local preparation, not production acceptance",
+  "sourceMain": "2d2f82d211a15f3d62d16479d34a59421af4c104",
+  "results": [
+    {
+      "fixture": "full-startup-current-2",
+      "status": "PASS",
+      "jarSha256": "0938131bf18dfa56c77e224aa3ef5cca05df21e9a1c06e42b7e22f2b126a0408",
+      "spring": {
+        "status": "READY",
+        "creationRecoveryGate": true,
+        "clockBeans": [
+          "assistantClock"
+        ],
+        "assistantStore": "com.auralink.assistant.PostgresAssistantStore",
+        "assistantExecution": "READY",
+        "beanCount": 506,
+        "lazyInitialization": false
+      },
+      "shutdownExit": 143,
+      "tables": 55,
+      "migrations": 16,
+      "databaseUnchanged": true,
+      "providerCalls": 0,
+      "externalObservations": [],
+      "productionConnections": 0,
+      "network": "isolated namespace: loopback only, no routes",
+      "productionFeatureCombination": "Assistant foundation/execution + Creation/workflows/providers + managed VMM CLOSED",
+      "mockBeans": false,
+      "lazyInitialization": false,
+      "paidAcceptance": "NOT_RUN",
+      "postgresStopped": true
+    },
+    {
+      "fixture": "full-startup-current-3",
+      "status": "PASS",
+      "creationFirst": true,
+      "jarSha256": "0938131bf18dfa56c77e224aa3ef5cca05df21e9a1c06e42b7e22f2b126a0408",
+      "spring": {
+        "beanCount": 507,
+        "assistantExecution": "READY",
+        "assistantStore": "com.auralink.assistant.PostgresAssistantStore",
+        "clockBeans": [
+          "creationClock",
+          "assistantClock"
+        ],
+        "creationRecoveryGate": true,
+        "status": "READY",
+        "lazyInitialization": false
+      },
+      "shutdownExit": 143,
+      "tables": 55,
+      "migrations": 16,
+      "databaseUnchanged": true,
+      "providerCalls": 0,
+      "externalObservations": [],
+      "productionConnections": 0,
+      "network": "isolated namespace: loopback only, no routes",
+      "productionFeatureCombination": "Assistant foundation/execution + Creation/workflows/providers + managed VMM CLOSED",
+      "mockBeans": false,
+      "lazyInitialization": false,
+      "paidAcceptance": "NOT_RUN",
+      "postgresStopped": true
+    },
+    {
+      "fixture": "full-startup-former-negative",
+      "status": "FAIL",
+      "postgresStopped": true,
+      "expectedNegativeControl": "CreationResultPersistenceService parameter 9: expected single matching Clock but found 2: creationClock,assistantClock",
+      "formalJarSha256": "27877cb509070291976a202530a2ddcae33ea7d4cd509ff06daebeaf9538f6f1"
+    }
+  ]
+}

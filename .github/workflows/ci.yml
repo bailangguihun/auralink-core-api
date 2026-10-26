@@ -68,6 +68,33 @@ jobs:
             --pg-lib /usr/lib/x86_64-linux-gnu \
             --port 55903 --jpa
 
+      - name: Verify full application startup with isolated native PostgreSQL
+        run: |
+          if [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
+            sudo apt-get update
+            sudo apt-get install -y postgresql-16
+          fi
+          for order in application creation-first; do
+            extra=()
+            if [ "$order" = creation-first ]; then extra=(--creation-first); fi
+            sudo unshare --net -- /bin/bash -c 'ip link set lo up; exec runuser -u "$1" -- "${@:2}"' bash "$(id -un)" \
+              python3 -B tests/run_full_application_startup.py \
+              --fixture "$RUNNER_TEMP/full-startup-$order" \
+              --jar target/auralink-backend-0.0.1-SNAPSHOT.jar \
+              --pg-bin /usr/lib/postgresql/16/bin --pg-lib /usr/lib/x86_64-linux-gnu "${extra[@]}"
+          done
+
+      - name: Preserve full startup diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-startup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/full-startup-*/RESULT.json
+            ${{ runner.temp }}/full-startup-*/SPRING_READY.json
+            ${{ runner.temp }}/full-startup-*/*.log
+          if-no-files-found: warn
+
       - name: Check out pinned managed VMM interoperability fixture
         uses: actions/checkout@v4
         with:
