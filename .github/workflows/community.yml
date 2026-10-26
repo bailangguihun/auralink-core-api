@@ -1,0 +1,41 @@
+name: Community Service CI
+on:
+  pull_request:
+    branches: [main, release]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  community:
+    name: Validate community foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: community_fixture
+          POSTGRES_PASSWORD: disposable_fixture_only
+          POSTGRES_DB: community_fixture
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U community_fixture -d community_fixture"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: community-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: community-service/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - name: Native PostgreSQL concurrent writers and rollback
+        env:
+          COMMUNITY_TEST_DATABASE_URL: postgres://community_fixture:disposable_fixture_only@127.0.0.1:5432/community_fixture
+        run: npm run test:postgres
