@@ -35,6 +35,8 @@ jobs:
           cache-dependency-path: community-service/package-lock.json
       - run: npm ci --ignore-scripts
       - run: npm test
+      - name: Package validation rejects dependency drift and unsafe files
+        run: python3 -B -m unittest discover -s ../tests -p 'test_community_bundle.py' -v
       - name: Native PostgreSQL concurrent writers and rollback
         env:
           COMMUNITY_TEST_DATABASE_URL: postgres://community_fixture:disposable_fixture_only@127.0.0.1:5432/community_fixture

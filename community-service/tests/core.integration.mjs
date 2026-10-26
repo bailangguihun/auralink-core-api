@@ -105,7 +105,15 @@ test('actual Core identity/gallery and native Community process interoperability
   const configFile = join(dir,'core.properties');
   await writeFile(configFile, Object.entries(config).map(([k,v])=>k+'='+String(v).replaceAll('\\','\\\\')).join('\n')+'\n', { flag:'wx',mode:0o600 });
   const env = Object.fromEntries(['PATH','JAVA_HOME','LANG','TZ'].filter(k=>process.env[k]).map(k=>[k,process.env[k]]));
-  core = launch(process.env.JAVA_BIN || 'java', ['-jar',jar,'--spring.profiles.active=catalog-postgres-production','--spring.config.additional-location=file:'+configFile], env,dir,join(dir,'core.log'));
+  // Use the existing private-rehearsal launcher. It retains the maintenance
+  // fence in this fixture's private directory rather than probing /root on CI.
+  const fence = join(dir, 'maintenance'); await mkdir(fence, { mode: 0o700 });
+  core = launch(process.env.JAVA_BIN || 'java', [
+    '-Dloader.main=com.auralink.ops.round51.LocalPrivateRehearsalLauncher',
+    '-Dauralink.local-private-rehearsal.state-dir='+fence,
+    '-cp',jar,'org.springframework.boot.loader.launch.PropertiesLauncher',
+    '--spring.profiles.active=catalog-postgres-production','--spring.config.additional-location=file:'+configFile,
+  ], env,dir,join(dir,'core.log'));
   await until(async () => { assert.equal(core.exitCode,null,'Core exited'); try { return (await fetch(coreOrigin+'/api/health')).ok; } catch { return false; } });
   async function coreRequest(path, payload, token) {
     const r = await fetch(coreOrigin+path,{method:payload?'POST':'GET',headers:{...(token?{authorization:'Bearer '+token}:{}),...(payload?{'content-type':'application/json'}:{})},body:payload?JSON.stringify(payload):undefined});
