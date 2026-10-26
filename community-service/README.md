@@ -1,8 +1,8 @@
 # ArtLIVE community foundation
 
 Status: first isolated implementation candidate; not an installed production
-service. Java Core classes, migrations V001–V016, VMM and existing data remain
-unchanged.
+service. Core JWT validation now checks current account status before accepting
+an existing token. Core migrations, VMM and existing data remain unchanged.
 
 The community-service directory is a separate Node process beside Core,
 with an existing repository for contract review. It is not inside the JAR.
@@ -13,6 +13,9 @@ administrators, users, coins, posts or generated engagement.
 
 - Verify existing tokens through Core's authenticated /api/user/profile.
   No second login, password table, copied signing secret or supplied actor ID.
+- Core rejects previously issued tokens after account disablement, locking,
+  account expiry or credential expiry. Targeted tests use the actual JWT,
+  authentication filter and profile components with an isolated User fixture.
 - Authenticated posts, comments, explicit like/favorite states and owner lists.
 - Gallery references retain the original UUID, validate at publication and
   revalidate for each viewer. Restricted sources hide their metadata.
