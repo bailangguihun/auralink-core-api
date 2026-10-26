@@ -17,7 +17,9 @@ concurrency:
 jobs:
   build:
     name: Build core API
-    runs-on: ubuntu-latest
+    # The PostgreSQL fixtures require the PostgreSQL 16 distribution paths.
+    # ubuntu-latest moved to 26.04, whose default apt sources lack that package.
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out repository
