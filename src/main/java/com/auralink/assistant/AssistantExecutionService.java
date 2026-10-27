@@ -13,18 +13,21 @@ import static com.auralink.assistant.AssistantExecutionRecords.*;
 /** Bounded dispatcher. HTTP subscriptions read durable events; they never own or resubmit execution. */
 public final class AssistantExecutionService implements AutoCloseable {
  private final AssistantExecutionStore store;private final AssistantStore foundation;private final AssistantAttachmentService attachments;
- private final AssistantAiClient ai;private final AssistantArtworkRead artworks;private final CatalogMediaService media;private final AssistantExecutionProperties p;private final ObjectMapper json;private final Clock clock;
+ private final AssistantAiClient ai;private final AssistantArtworkRead artworks;private final CatalogMediaService media;private final AssistantExecutionProperties p;private final ObjectMapper json;private final Clock clock;private final AssistantWebSearchClient webSearch;
  private volatile Map<String,Object> registry;
  private final java.util.function.Supplier<String> generationControl;
  private final String worker=UUID.randomUUID().toString();
  private final ScheduledExecutorService scheduler=Executors.newScheduledThreadPool(2,thread("assistant-scheduler"));
  private final ExecutorService workers;private final Semaphore capacity;private final ConcurrentHashMap<UUID,Long> active=new ConcurrentHashMap<>();private volatile boolean closed;
  public AssistantExecutionService(AssistantExecutionStore store,AssistantStore foundation,AssistantAttachmentService attachments,AssistantAiClient ai,AssistantArtworkRead artworks,CatalogMediaService media,AssistantExecutionProperties p,ObjectMapper json,Clock clock){
-  this(store,foundation,attachments,ai,artworks,media,p,json,clock,()->"AVAILABLE");
+  this(store,foundation,attachments,ai,artworks,media,p,json,clock,null,()->"AVAILABLE");
  }
  public AssistantExecutionService(AssistantExecutionStore store,AssistantStore foundation,AssistantAttachmentService attachments,AssistantAiClient ai,AssistantArtworkRead artworks,CatalogMediaService media,AssistantExecutionProperties p,ObjectMapper json,Clock clock,java.util.function.Supplier<String> generationControl){
+  this(store,foundation,attachments,ai,artworks,media,p,json,clock,null,generationControl);
+ }
+ public AssistantExecutionService(AssistantExecutionStore store,AssistantStore foundation,AssistantAttachmentService attachments,AssistantAiClient ai,AssistantArtworkRead artworks,CatalogMediaService media,AssistantExecutionProperties p,ObjectMapper json,Clock clock,AssistantWebSearchClient webSearch,java.util.function.Supplier<String> generationControl){
   this.generationControl=Objects.requireNonNull(generationControl);
-  this.store=store;this.foundation=foundation;this.attachments=attachments;this.ai=ai;this.artworks=artworks;this.media=media;this.p=p;this.json=json;this.clock=clock;
+  this.store=store;this.foundation=foundation;this.attachments=attachments;this.ai=ai;this.artworks=artworks;this.media=media;this.p=p;this.json=json;this.clock=clock;this.webSearch=webSearch;
   workers=Executors.newFixedThreadPool(p.getConcurrency(),thread("assistant-execution"));capacity=new Semaphore(p.getConcurrency());
  }
  private static java.util.concurrent.ThreadFactory thread(String name){return r->{Thread t=new Thread(r,name);t.setDaemon(true);return t;};}
@@ -32,7 +35,7 @@ public final class AssistantExecutionService implements AutoCloseable {
  public boolean generationAvailable(){return "AVAILABLE".equals(generationState());}
  private void requireGeneration(){String state=generationState();if(!"AVAILABLE".equals(state))throw new AssistantFailure(503,state,"Assistant generation is suspended; existing history and attachments remain available");}
  public void start(){scheduler.scheduleWithFixedDelay(this::tick,50,p.getPollInterval().toMillis(),TimeUnit.MILLISECONDS);}
- public Map<String,Object> models(){Map<String,Object> result=ai.models();registry=result;return result;}
+ public Map<String,Object> models(){Map<String,Object> result=new LinkedHashMap<>(ai.models());result.put("webSearch",Map.of("state",webSearch==null?"NOT_CONFIGURED":"AVAILABLE"));registry=result;return result;}
  @SuppressWarnings("unchecked") private Map<String,Object> model(String id){
   if(id==null||!id.matches("[A-Za-z0-9_.:-]{1,100}"))throw AssistantFailure.invalid("An explicit model selection is required");
   Map<String,Object> value=registry;if(value==null){synchronized(this){if(registry==null)models();value=registry;}}
@@ -46,10 +49,11 @@ public final class AssistantExecutionService implements AutoCloseable {
   if(c.attachmentIds()!=null&&c.attachmentIds().stream().anyMatch(Objects::isNull)||c.artworkRefs()!=null&&c.artworkRefs().stream().anyMatch(Objects::isNull))throw AssistantFailure.invalid("Null attachment or artwork references are invalid");
   List<UUID> files=c.attachmentIds()==null?List.of():List.copyOf(c.attachmentIds());List<ArtworkRef> refs=c.artworkRefs()==null?List.of():List.copyOf(c.artworkRefs());
   if(files.size()>4||refs.size()>5||new HashSet<>(files).size()!=files.size()||refs.stream().map(ArtworkRef::artworkId).distinct().count()!=refs.size())throw AssistantFailure.invalid("Image/artwork input limit exceeded");
-  Map<String,Boolean> retrieval=c.retrieval()==null?Map.of():c.retrieval();if(!Set.of("artworks","ragflow").containsAll(retrieval.keySet()))throw AssistantFailure.invalid("Unknown retrieval source");
+  Map<String,Boolean> retrieval=c.retrieval()==null?Map.of():c.retrieval();if(!Set.of("artworks","ragflow","web").containsAll(retrieval.keySet()))throw AssistantFailure.invalid("Unknown retrieval source");
   for(var ref:refs)if(ref.artworkId()==null||ref.expectedBatchId()==null||ref.expectedRevision()<1)throw AssistantFailure.invalid("Artwork identity and revision are required");
   if(!refs.isEmpty()&&!Boolean.TRUE.equals(retrieval.get("artworks")))throw AssistantFailure.invalid("Artwork references require explicit platform retrieval");
-  var options=new LinkedHashMap<String,Object>();options.put("configSha256",p.getExpectedConfigSha256());options.put("retrieval",Map.of("artworks",Boolean.TRUE.equals(retrieval.get("artworks")),"ragflow",Boolean.TRUE.equals(retrieval.get("ragflow"))));options.put("artworkRefs",refs.stream().map(r->Map.of("artworkId",r.artworkId().toString(),"expectedBatchId",r.expectedBatchId().toString(),"expectedRevision",r.expectedRevision(),"includeImage",r.includeImage())).toList());options.put("promptVersion","assistant-chat-v1");
+  var retrievalOptions=new LinkedHashMap<String,Object>();retrievalOptions.put("artworks",Boolean.TRUE.equals(retrieval.get("artworks")));retrievalOptions.put("ragflow",Boolean.TRUE.equals(retrieval.get("ragflow")));retrievalOptions.put("web",Boolean.TRUE.equals(retrieval.get("web")));
+  var options=new LinkedHashMap<String,Object>();options.put("configSha256",p.getExpectedConfigSha256());options.put("retrieval",retrievalOptions);options.put("artworkRefs",refs.stream().map(r->Map.of("artworkId",r.artworkId().toString(),"expectedBatchId",r.expectedBatchId().toString(),"expectedRevision",r.expectedRevision(),"includeImage",r.includeImage())).toList());options.put("promptVersion","assistant-chat-v1");
   return new Admission(session,c.branchId(),c.expectedVersion(),c.requestKey(),c.text(),files,c.modelKey(),options);
  }
  private void validateInput(long owner,Admission c){
@@ -99,8 +103,8 @@ public final class AssistantExecutionService implements AutoCloseable {
    requireGeneration();
    if(!p.getExpectedConfigSha256().equals(claimed.options().get("configSha256")))throw new AssistantFailure(409,"ASSISTANT_CONFIG_CHANGED","Saved configuration is no longer available");
    var selected=claimed.kind().equals("RETRIEVAL")?Map.<String,Object>of():model(claimed.modelId());var preparation=new AssistantArtworkDeadline();var context=buildContext(owner,claimed,selected,preparation);Map<String,Object> retrieval=new LinkedHashMap<>();Map<String,Object> requested=map(claimed.options().get("retrieval"));
-   boolean platform=Boolean.TRUE.equals(requested.get("artworks"))&&!claimed.kind().equals("SUMMARY");boolean rag=Boolean.TRUE.equals(requested.get("ragflow"))&&!claimed.kind().equals("SUMMARY");
-   retrieval.put("artworks",platform?"EMPTY":"DISABLED");retrieval.put("ragflow",rag?"NOT_CONFIGURED":"DISABLED");
+   boolean platform=Boolean.TRUE.equals(requested.get("artworks"))&&!claimed.kind().equals("SUMMARY");boolean rag=Boolean.TRUE.equals(requested.get("ragflow"))&&!claimed.kind().equals("SUMMARY");boolean web=Boolean.TRUE.equals(requested.get("web"))&&!claimed.kind().equals("SUMMARY");
+   retrieval.put("artworks",platform?"EMPTY":"DISABLED");retrieval.put("ragflow",rag?"NOT_CONFIGURED":"DISABLED");retrieval.put("web",web?(webSearch==null?"NOT_CONFIGURED":"EMPTY"):"DISABLED");
    if(platform){
     try{
      var references=refs(claimed.options());var found=selectedArtworks(references,preparation);
@@ -113,12 +117,17 @@ public final class AssistantExecutionService implements AutoCloseable {
      throw e; // Explicit selected-source failure never silently falls back to a charged general answer.
     }
    }
+   if(rag||(web&&webSearch!=null)){requireGeneration();run.set(store.markIntent(owner,claimed.id(),claimed.fence(),worker,"RETRIEVAL"));}
    if(rag){
-    requireGeneration();
-    run.set(store.markIntent(owner,claimed.id(),claimed.fence(),worker,"RETRIEVAL"));
     try{var result=ai.retrieval(context.query().substring(0,Math.min(2000,context.query().length())),true);String state=Objects.toString(result.get("state"),"UNAVAILABLE");if(!Set.of("DISABLED","NOT_CONFIGURED","AVAILABLE","EMPTY","FORBIDDEN","TIMEOUT","UNAVAILABLE").contains(state))state="UNAVAILABLE";retrieval.put("ragflow",state);
      if(state.equals("AVAILABLE"))for(Object item:list(result.get("citations"))){Map<String,Object> c=map(item);String excerpt=Objects.toString(c.get("text"),"");var provenance=new LinkedHashMap<String,Object>();for(String key:List.of("datasetId","documentId","chunkId","title","version","contentSha256"))provenance.put(key,c.get(key));provenance.put("configSha256",p.getExpectedConfigSha256());provenance.put("retrievedAt",clock.instant().toString());String upstreamVersion=c.get("version") instanceof String v&&!v.isBlank()?v:null;provenance.put("upstreamVersionAbsent",upstreamVersion==null);String sourceVersion=upstreamVersion==null?"received-content-sha256:"+digest(excerpt):upstreamVersion;citations.add(new Citation(UUID.randomUUID(),citations.size()+1,"RAGFLOW_DOCUMENT",Objects.toString(c.get("id"),""),sourceVersion,"ragflow-public-chunk-v1",provenance,excerpt,digest(excerpt)));}
     }catch(AssistantFailure e){retrieval.put("ragflow",e.code().equals("ASSISTANT_RETRIEVAL_TIMEOUT")?"TIMEOUT":"UNAVAILABLE");}
+   }
+   if(web&&webSearch!=null){
+    try{
+     List<AssistantWebSearchClient.Result> results=webSearch.search(context.query());retrieval.put("web",results.isEmpty()?"EMPTY":"AVAILABLE");
+     for(var result:results){if(citations.size()>=20)break;String excerpt=result.title()+"\n"+result.description()+"\n"+result.url();String hash=digest(excerpt);var provenance=new LinkedHashMap<String,Object>();provenance.put("provider","BRAVE_SEARCH");provenance.put("title",result.title());provenance.put("url",result.url());if(!result.age().isBlank())provenance.put("age",result.age());provenance.put("retrievedAt",clock.instant().toString());provenance.put("upstreamVersionAbsent",true);citations.add(new Citation(UUID.randomUUID(),citations.size()+1,"WEB_RESULT",digest(result.url()),"received-content-sha256:"+hash,"brave-web-search-v1",provenance,excerpt,hash));}
+    }catch(AssistantWebSearchClient.Failure failure){retrieval.put("web",failure.state());}
    }
    // Revalidate the currently public projection and owned attachment lifecycle
    // after potentially slow retrieval, before persistence/chargeable dispatch.
@@ -130,7 +139,6 @@ public final class AssistantExecutionService implements AutoCloseable {
     var lookupOnly=citations.stream().map(c->{var v=new LinkedHashMap<>(c.provenance());v.put("deliveryEvidence","LOOKUP_ONLY");return new Citation(c.id(),c.ordinal(),c.sourceType(),c.sourceId(),c.sourceVersion(),c.projectionVersion(),v,c.excerpt(),c.excerptSha256());}).toList();
     store.complete(owner,claimed.id(),claimed.fence(),worker,"COMPLETED","",lookupOnly,Map.of("available",false,"purpose","RETRIEVAL"),List.of());terminal.set(true);return;
    }
-   String notice=notice(retrieval);if(!notice.isEmpty()){text.set(notice);run.set(store.checkpoint(owner,claimed.id(),claimed.fence(),worker,run.get().sequence(),notice,Map.of("text",notice)));}
    // Re-check ownership/lifecycle and durable intent immediately before the potentially chargeable send.
    var boundedContext=new AssistantArtworkContext(json);var wireCitations=boundedContext.wire(citations);boundedContext.validateTextBudget(context.messages(),wireCitations);
    Map<String,Object> request=new LinkedHashMap<>();request.put("contractVersion",1);request.put("runId",claimed.id().toString());request.put("attemptId",claimed.id().toString());request.put("fence",claimed.fence());request.put("configSha256",p.getExpectedConfigSha256());request.put("purpose",claimed.kind());request.put("modelKey",claimed.modelId());request.put("messages",context.messages());request.put("citations",wireCitations);request.put("retrievalStates",retrieval);request.put("budgets",Map.of("totalMs",Math.min(180000,p.getTotalTimeout().toMillis()),"maxOutputTokens",4096));
@@ -213,7 +221,6 @@ public final class AssistantExecutionService implements AutoCloseable {
   return true;
  }
  private static List<ArtworkRef> refs(Map<String,Object> options){return list(options.get("artworkRefs")).stream().map(item->{Map<String,Object> r=map(item);return new ArtworkRef(UUID.fromString((String)r.get("artworkId")),UUID.fromString((String)r.get("expectedBatchId")),((Number)r.get("expectedRevision")).intValue(),Boolean.TRUE.equals(r.get("includeImage")));}).toList();}
- static String notice(Map<String,Object> states){var missing=states.entrySet().stream().filter(e->!Set.of("AVAILABLE","DISABLED").contains(e.getValue())).map(e->e.getKey()+"="+e.getValue()).toList();return missing.isEmpty()?"":"【资料检索状态："+String.join("，",missing)+"；以下回答不代表已获得该来源的证据。】\n";}
  static List<ChoiceCard> parseChoices(Map<String,Object> value){try{List<ChoiceCard> cards=new ArrayList<>();for(Object item:list(value.get("cards"))){var card=map(item);List<ChoiceOption> options=list(card.get("options")).stream().map(v->{var o=map(v);String label=(String)o.get("label");return new ChoiceOption((String)o.get("id"),label,label);}).toList();cards.add(new ChoiceCard((String)card.get("id"),(String)card.get("title"),options));}return AssistantExecutionStore.validChoices(cards)?cards:List.of();}catch(RuntimeException e){return List.of();}}
  private String encode(Object value){try{return json.writeValueAsString(value);}catch(Exception e){throw protocol();}}
  private static String digest(String value){return AssistantAttachmentStorage.sha256(value.getBytes(StandardCharsets.UTF_8));}

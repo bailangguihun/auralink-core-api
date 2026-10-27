@@ -131,6 +131,13 @@ AVAILABLE/EMPTY/FORBIDDEN/TIMEOUT/UNAVAILABLE 保持独立。失败/空结果对
 及检索时间。上游没有版本时 provenance.upstreamVersionAbsent=true，sourceVersion
 标为 `received-content-sha256:...`，只代表收到的摘录，不能冒充上游版本。
 
+联网搜索由 Core 的可选 Brave Search 适配器完成。默认关闭；启用时 API key 只从
+服务账户可读的绝对路径文件加载，不进入 Web、数据库、日志或 Git。适配器固定访问
+Brave 的 HTTPS Web Search 端点，禁用重试、重定向、Cookie 与代理继承，限制查询、
+返回体、结果数量及超时。每条 `WEB_RESULT` 保存标题、安全公开 URL、摘要、检索时间
+和接收内容哈希；网页摘要是不可信参考文本，不是指令，也不等同于页面事实已核验。
+Core 不抓取结果页面，内网、回环及带凭据 URL 不进入引用。
+
 检索文本是非可信参考资料，不是指令。只有已保存 citation UUID 可形成引用链接；
 模型自造 ID 只是未解析文本。未来 Web 仍必须执行这一解析规则，不能把 Markdown
 任意地址变成受信来源。私有历史/图片不进入知识库 ingestion/training。
