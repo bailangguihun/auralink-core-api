@@ -37,6 +37,21 @@ class AssistantExecutionStorePostgresTest {
   jdbc.execute("ALTER TABLE assistant_citations DROP CONSTRAINT assistant_citations_source_type_check");
   assertFalse(store.supportsWebCitations());
  }
+ @Test void closingMissingChatPreventsLateAdmissionAndPreservesAcceptedResult(){
+  var s=session(1);
+  var late=command(s,"unconfirmed-chat","original");
+  fail(404,()->base.closeUnconfirmedChatRequest(2,"CHAT_EXECUTION",late.requestKey(),s.id()));
+  assertEquals("NOT_FOUND",base.resolveRequest(1,"CHAT_EXECUTION",late.requestKey(),s.id()).status());
+  assertEquals("CLOSED",base.closeUnconfirmedChatRequest(1,"CHAT_EXECUTION",late.requestKey(),s.id()).status());
+  assertEquals("CLOSED",base.closeUnconfirmedChatRequest(1,"CHAT_EXECUTION",late.requestKey(),s.id()).status());
+  fail(409,()->store.admit(1,late));
+  var next=command(s,"replacement-chat","corrected");
+  var accepted=store.admit(1,next);
+  var found=base.closeUnconfirmedChatRequest(1,"CHAT_EXECUTION",next.requestKey(),s.id());
+  assertEquals("FOUND",found.status());
+  assertEquals(accepted.run().id(),found.resultId());
+  assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM assistant_runs",Integer.class));
+ }
  @Test void sourcePublicationRequiresDispatchAndRejectsLateCancellationOrDeletion(){
   var s=session(1);store.admit(1,command(s,"source-confirm","q"));var r=claim(s);
   var citation=new Citation(UUID.randomUUID(),1,"PLATFORM_ARTWORK",UUID.randomUUID().toString(),"batch:1","public-v1",Map.of("deliveryEvidence","MODEL_STREAM_OBSERVED"),"[]",AssistantArtworkContext.sha("[]"));

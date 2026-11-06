@@ -10,7 +10,7 @@ import java.util.UUID;
 public final class AssistantDtos {
    private AssistantDtos() {}
    public record Status(boolean enabled, String stage, boolean executionAvailable,boolean generationAvailable,String generationState,boolean automaticSummaryAvailable,Integer summaryTurnThreshold,Long summaryIdleSeconds,Integer maxSummaryPerHour) {}
-   public record ResolveRequest(@NotBlank @Size(max=40) String operation,@NotBlank @Pattern(regexp="[A-Za-z0-9_.:-]{8,128}") String requestKey,UUID sessionId) {}
+   public record ResolveRequest(@NotBlank @Size(max=40) String operation,@NotBlank @Pattern(regexp="[A-Za-z0-9_.:-]{8,128}") String requestKey,UUID sessionId,boolean closeIfMissing) {}
    public record CreateSession(@NotBlank @Pattern(regexp="[A-Za-z0-9_.:-]{8,128}") String requestKey, @NotBlank @Size(max=160) String title) {}
    public record UpdateSession(@NotNull @PositiveOrZero Long expectedVersion, @Size(min=1,max=160) String title,
       UUID activeBranchId, Boolean summaryAutoEnabled) {}
