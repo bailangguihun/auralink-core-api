@@ -9,6 +9,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -30,5 +31,16 @@ public class PaintingStatisticsController {
             "PostgreSQL 画作统计尚未启用");
       }
       return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(store.paintingStatistics());
+   }
+
+   @GetMapping("/api/v1/knowledge/painting-statistics/{metric}")
+   public ResponseEntity<PaintingMetricPage> metric(@PathVariable String metric, @RequestParam Map<String, String> parameters) {
+      PaintingMetricQuery query = PaintingMetricQuery.parse(metric, parameters);
+      CatalogReadStore store = stores.getIfAvailable();
+      if (store == null) {
+         throw new ApiV1Exception(HttpStatus.SERVICE_UNAVAILABLE, ApiErrorCode.CATALOG_READ_UNAVAILABLE,
+            "PostgreSQL 画作统计尚未启用");
+      }
+      return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(store.paintingMetric(query));
    }
 }

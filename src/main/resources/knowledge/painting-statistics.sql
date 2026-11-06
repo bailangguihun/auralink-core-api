@@ -468,5 +468,4 @@ SELECT (SELECT count(*) FROM population) AS population_count,
  (SELECT count(*) FROM records WHERE author IS NOT NULL) AS author_eligible,
  c.metric,c.eligible,c.eligible-c.matched AS unmatched,r.label,r.value,COALESCE(r.total_groups,0) AS total_groups
 FROM coverage c LEFT JOIN ranked r ON r.metric=c.metric
- AND r.rank<=CASE c.metric WHEN 'style' THEN 12 WHEN 'imagery' THEN 40 ELSE 50 END
 ORDER BY c.metric,r.rank
