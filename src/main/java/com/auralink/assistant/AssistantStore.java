@@ -27,6 +27,7 @@ public interface AssistantStore {
    List<Branch> branches(long owner,UUID sessionId);
    Branch branch(long owner,UUID sessionId,UUID branchId);
    RequestResolution resolveRequest(long owner,String operation,String requestKey,UUID sessionId);
+   RequestResolution closeUnconfirmedChatRequest(long owner,String operation,String requestKey,UUID sessionId);
    record RequestResolution(String operation,String status,UUID sessionId,String resultType,UUID resultId,
       String resultStatus,Instant expiresAt,Boolean attachmentLinked) {}
    List<Message> history(long owner,UUID sessionId,UUID branchId,boolean includeHistory,int limit);
