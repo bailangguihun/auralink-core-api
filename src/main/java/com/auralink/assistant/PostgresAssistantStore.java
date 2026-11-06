@@ -182,13 +182,32 @@ public final class PostgresAssistantStore implements AssistantStore {
    @Override public List<Branch> branches(long owner,UUID id){return tx(()->{lock(owner,id,false);return jdbc.query("SELECT * FROM assistant_branches WHERE session_id=? ORDER BY created_at,id",BRANCH,id);});}
    @Override public Branch branch(long owner,UUID sessionId,UUID branchId){return tx(()->{lock(owner,sessionId,false);return branch(sessionId,branchId);});}
    @Override public RequestResolution resolveRequest(long owner,String operation,String requestKey,UUID sessionId){
+      return resolveRequest(owner,operation,requestKey,sessionId,false);
+   }
+   @Override public RequestResolution closeUnconfirmedChatRequest(long owner,String operation,String requestKey,UUID sessionId){
+      if(!"CHAT_EXECUTION".equals(operation)||sessionId==null)throw AssistantFailure.invalid("Closing a request requires a chat operation and session");
+      return resolveRequest(owner,operation,requestKey,sessionId,true);
+   }
+   private RequestResolution resolveRequest(long owner,String operation,String requestKey,UUID sessionId,boolean closeIfMissing){
       String type=switch(operation==null?"":operation){case "CREATE_SESSION"->"SESSION";case "CHAT_EXECUTION","EDITED_EXECUTION","RETRY_EXECUTION","RETRIEVAL_EXECUTION","SUMMARY_EXECUTION"->"RUN";case "REVISE_MESSAGE"->"BRANCH";case "UPLOAD_ATTACHMENT"->"ATTACHMENT";case "CLASSIFY_MESSAGE"->"MESSAGE";default->throw AssistantFailure.invalid("Unsupported request operation");};
       String hash=key(requestKey);return tx(()->{
-         // Serialize with admission, but never insert, expire, dispatch or alter a request.
+         // Admission uses the same owner lock. A tombstone prevents any late admission for this key.
          ownerLock(owner);if(sessionId!=null)lock(owner,sessionId,true);
          var rows=jdbc.queryForList("SELECT session_id,result_id,status,expires_at FROM assistant_requests WHERE owner_id=? AND operation=? AND key_hash=?",owner,operation,hash);
-         if(rows.isEmpty()){if(sessionId!=null)lock(owner,sessionId,false);return new RequestResolution(operation,"NOT_FOUND",sessionId,type,null,null,null,null);}
+         if(rows.isEmpty()){
+            if(sessionId!=null)lock(owner,sessionId,false);
+            if(closeIfMissing){
+               Instant created=clock.instant();
+               jdbc.update("INSERT INTO assistant_requests(owner_id,operation,key_hash,payload_hash,session_id,status,created_at,expires_at) VALUES(?,?,?,?,?,'EXPIRED',?,?)",
+                  owner,operation,hash,digest("unconfirmed-chat-closed"),sessionId,Timestamp.from(created),Timestamp.from(created.plus(requestWindow)));
+            }
+            return new RequestResolution(operation,closeIfMissing?"CLOSED":"NOT_FOUND",sessionId,type,null,null,null,null);
+         }
          var row=rows.get(0);UUID actual=(UUID)row.get("session_id");if(sessionId!=null&&!sessionId.equals(actual))throw AssistantFailure.notFound();
+         if(closeIfMissing&&("EXPIRED".equals(row.get("status"))||("ACTIVE".equals(row.get("status"))&&!((Timestamp)row.get("expires_at")).toInstant().isAfter(clock.instant())))){
+            lock(owner,sessionId,false);
+            return new RequestResolution(operation,"CLOSED",sessionId,type,null,null,null,null);
+         }
          if(!"ACTIVE".equals(row.get("status"))||!((Timestamp)row.get("expires_at")).toInstant().isAfter(clock.instant()))throw AssistantFailure.gone();
          if(actual==null)throw AssistantFailure.notFound();lock(owner,actual,false);
          UUID result=(UUID)row.get("result_id");String resultStatus=null;Boolean linked=null;
