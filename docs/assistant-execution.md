@@ -138,6 +138,17 @@ Brave 的 HTTPS Web Search 端点，禁用重试、重定向、Cookie 与代理�
 和接收内容哈希；网页摘要是不可信参考文本，不是指令，也不等同于页面事实已核验。
 Core 不抓取结果页面，内网、回环及带凭据 URL 不进入引用。
 
+兼容现用 AI v1：私有执行请求的 `retrievalStates` 仍只包含 `artworks`、`ragflow`，
+Web 状态完整保留在 Core 的持久记录和公开事件中。发送及保存的来源使用同一份有界列表，
+最多 16 条；先保留用户选择的画作，再保留 RAG 和联网结果，超出的自动检索结果不发送。
+仅设置 `web-search.enabled=true` 不会使搜索就绪：AI `/models` 必须显式公布
+`executionCapabilities.citationTypes` 包含 `WEB_RESULT`，实际数据库的单列
+`assistant_citations.source_type` CHECK 必须精确允许 `PLATFORM_ARTWORK`、
+`RAGFLOW_DOCUMENT`、`WEB_RESULT` 三类。任一条件不满足时 `webSearch.state` 为
+`NOT_CONFIGURED`，不会构造搜索客户端、读取 Brave 密钥或调用搜索。
+本次发布保持联网默认关闭，没有新增或执行数据库迁移，也没有更改 AI 服务；后续启用
+联网须另行提供兼容 AI 及追加迁移，不能修改已应用 V014 的校验和或伪装引用类型。
+
 检索文本是非可信参考资料，不是指令。只有已保存 citation UUID 可形成引用链接；
 模型自造 ID 只是未解析文本。未来 Web 仍必须执行这一解析规则，不能把 Markdown
 任意地址变成受信来源。私有历史/图片不进入知识库 ingestion/training。
