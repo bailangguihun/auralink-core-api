@@ -38,7 +38,10 @@ public class AssistantController {
    }
    @GetMapping("/storage") public ResponseEntity<?> storageUsage(){long owner=owner();return ok(attachmentService().usage(owner));}
    @PostMapping("/requests/resolve") public ResponseEntity<?> resolve(@Valid @RequestBody AssistantDtos.ResolveRequest body){
-      long owner=owner();return ok(store().resolveRequest(owner,body.operation(),body.requestKey(),body.sessionId()));
+      long owner=owner();
+      return ok(body.closeIfMissing()
+         ? store().closeUnconfirmedChatRequest(owner,body.operation(),body.requestKey(),body.sessionId())
+         : store().resolveRequest(owner,body.operation(),body.requestKey(),body.sessionId()));
    }
    @GetMapping("/sessions/{id}/branches/{branchId}") public ResponseEntity<?> branch(@PathVariable UUID id,@PathVariable UUID branchId){
       long owner=owner();return ok(AssistantDtos.branch(store().branch(owner,id,branchId)));
