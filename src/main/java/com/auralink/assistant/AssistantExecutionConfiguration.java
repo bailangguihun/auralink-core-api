@@ -29,8 +29,15 @@ public class AssistantExecutionConfiguration {
    var store=new AssistantExecutionStore(source,foundation,Clock.systemUTC(),base.getRequestReplayWindow(),base.getMaxPendingPerSession(),p.getMaxEvents(),p.getConcurrency(),p.getOwnerConcurrency(),p.getGlobalPending(),p.getOwnerPending());store.verifySchema();
    client=new AssistantAiClient(p,json);
    AssistantWebSearchProperties webProperties=Binder.get(environment).bind("auralink.assistant.web-search",Bindable.of(AssistantWebSearchProperties.class)).orElseGet(AssistantWebSearchProperties::new);
-   if(webProperties.isEnabled())try{webSearch=new AssistantWebSearchClient(webProperties,json);}catch(RuntimeException unavailable){webSearch=null;/* Optional search misconfiguration must not erase model/history availability. */}
+   if(webProperties.isEnabled())try{if(webSearchReady(store,client))webSearch=new AssistantWebSearchClient(webProperties,json);}catch(RuntimeException unavailable){webSearch=null;/* Optional search misconfiguration must not erase model/history availability. */}
    var jdbc=reads.getIfAvailable();var service=new AssistantExecutionService(store,foundation,attachment,client,jdbc==null?null:new AssistantArtworkRead(jdbc),media.getIfAvailable(),p,json,Clock.systemUTC(),webSearch,new AssistantGenerationControl(java.nio.file.Path.of(base.getAttachmentRoot()))::state);service.start();return new AssistantExecutionRuntime(service,client,webSearch,"READY");
   }catch(RuntimeException misconfigured){if(client!=null)client.close();if(webSearch!=null)webSearch.close();return new AssistantExecutionRuntime(null,null,"ASSISTANT_EXECUTION_MISCONFIGURED");}
+ }
+ /** Older AI registries and the existing two-type database are not web-ready. */
+ static boolean webSearchReady(AssistantExecutionStore store,AssistantAiClient client){
+  var capabilities=AssistantExecutionService.map(client.models().get("executionCapabilities"));
+  Object types=capabilities.get("citationTypes");
+  return types instanceof java.util.List<?> supported && supported.contains("WEB_RESULT")
+    && store.supportsWebCitations();
  }
 }

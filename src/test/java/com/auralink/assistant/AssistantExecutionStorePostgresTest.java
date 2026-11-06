@@ -27,6 +27,16 @@ class AssistantExecutionStorePostgresTest {
  private Run claim(AssistantRecords.Session s){return store.claim(1,s.id(),"worker-1",Duration.ofSeconds(10)).orElseThrow();}
  private Run finish(Run r,String state,String text){return store.complete(1,r.id(),r.fence(),"worker-1",state,text,List.of(),Map.of(),List.of());}
  private Run completed(AssistantRecords.Session s,String key){store.admit(1,command(s,key,"构图参考"));var r=claim(s);store.markDispatch(1,r.id(),r.fence(),"worker-1");return finish(r,"COMPLETED","answer");}
+ @Test void optionalWebCompatibilityReadsTheActualConstraintWithoutChangingIt(){
+  String before=jdbc.queryForObject("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='assistant_citations'::regclass AND conname='assistant_citations_source_type_check'",String.class);
+  assertFalse(store.supportsWebCitations());
+  assertEquals(before,jdbc.queryForObject("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='assistant_citations'::regclass AND conname='assistant_citations_source_type_check'",String.class));
+  // This is the disposable per-test schema, never a runtime migration.
+  jdbc.execute("ALTER TABLE assistant_citations DROP CONSTRAINT assistant_citations_source_type_check, ADD CONSTRAINT assistant_citations_source_type_check CHECK(source_type IN ('PLATFORM_ARTWORK','RAGFLOW_DOCUMENT','WEB_RESULT'))");
+  assertTrue(store.supportsWebCitations());
+  jdbc.execute("ALTER TABLE assistant_citations DROP CONSTRAINT assistant_citations_source_type_check");
+  assertFalse(store.supportsWebCitations());
+ }
  @Test void sourcePublicationRequiresDispatchAndRejectsLateCancellationOrDeletion(){
   var s=session(1);store.admit(1,command(s,"source-confirm","q"));var r=claim(s);
   var citation=new Citation(UUID.randomUUID(),1,"PLATFORM_ARTWORK",UUID.randomUUID().toString(),"batch:1","public-v1",Map.of("deliveryEvidence","MODEL_STREAM_OBSERVED"),"[]",AssistantArtworkContext.sha("[]"));
