@@ -39,6 +39,17 @@ public final class AssistantExecutionStore {
   this.maxPending=maxPending;this.maxEvents=maxEvents;this.globalExecuting=globalExecuting;this.ownerExecuting=ownerExecuting;this.globalPending=globalPending;this.ownerPending=ownerPending;
  }
  public void verifySchema(){try{jdbc.queryForList("SELECT model_id,options,lease_owner,lease_until,dispatched_at,retrieval_dispatched_at,retry_of,attempt,usage,retrieval,context_manifest,last_error FROM assistant_runs WHERE false");jdbc.queryForList("SELECT run_id,card_id,source_message_id,options FROM assistant_choice_cards WHERE false");}catch(org.springframework.dao.DataAccessException e){throw new AssistantFailure(503,"ASSISTANT_SCHEMA_UNAVAILABLE","Assistant execution requires an explicitly applied compatible migration");}}
+ /** Optional web retrieval requires an explicit schema upgrade. This only reads
+  * catalog metadata; startup must never weaken or migrate a production constraint. */
+ boolean supportsWebCitations(){
+  var definitions=jdbc.queryForList("""
+   SELECT pg_get_constraintdef(c.oid) FROM pg_constraint c
+   WHERE c.conrelid='assistant_citations'::regclass AND c.contype='c'
+     AND c.conkey=ARRAY[(SELECT attnum FROM pg_attribute
+       WHERE attrelid=c.conrelid AND attname='source_type' AND NOT attisdropped)]
+   """,String.class);
+  return definitions.equals(List.of("CHECK ((source_type = ANY (ARRAY['PLATFORM_ARTWORK'::text, 'RAGFLOW_DOCUMENT'::text, 'WEB_RESULT'::text])))"));
+ }
  private <T>T tx(Supplier<T> work){return transaction.execute(s->work.get());}
  private Timestamp now(){return Timestamp.from(clock.instant());}
  private static Instant instant(ResultSet r,String name)throws SQLException{var t=r.getTimestamp(name);return t==null?null:t.toInstant();}

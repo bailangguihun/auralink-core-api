@@ -40,6 +40,7 @@ final class AssistantArtworkContext {
   return new Citation(UUID.randomUUID(),ordinal,"PLATFORM_ARTWORK",art.artworkId().toString(),art.batchId()+":"+art.revision(),art.projectionVersion(),provenance,excerpt,sha(excerpt));
  }
  List<Map<String,Object>> wire(List<Citation> citations){
+  if(citations.size()>16)throw limit();
   if(citations.stream().filter(c->c.sourceType().equals("PLATFORM_ARTWORK")).count()>MAX_SOURCES)throw limit();
   if(citations.stream().filter(c->c.sourceType().equals("PLATFORM_ARTWORK")).mapToInt(c->bytes(c.excerpt())).sum()>TOTAL_BYTES)throw limit();
   var result=citations.stream().map(c->{var item=new LinkedHashMap<String,Object>();item.put("id",c.id().toString());item.put("type",c.sourceType());item.put("text",c.excerpt());

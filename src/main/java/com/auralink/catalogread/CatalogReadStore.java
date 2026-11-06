@@ -8,6 +8,9 @@ import java.util.Optional;
 public interface CatalogReadStore {
    com.auralink.api.v1.knowledge.PaintingStatisticsResponse paintingStatistics();
 
+   com.auralink.api.v1.knowledge.PaintingMetricPage paintingMetric(
+      com.auralink.api.v1.knowledge.PaintingMetricQuery query);
+
    CatalogReadStore.CatalogPage list(CatalogReadStore.CatalogQuery query);
 
    Optional<CatalogReadStore.CatalogPainting> findPainting(String publicId);

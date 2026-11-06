@@ -492,6 +492,34 @@ class PaintingStatisticsPostgresTest {
       assertTrue(response.metrics().values().stream().allMatch(m->m.status().equals("unavailable")&&m.items().isEmpty()));
    }
 
+   @Test void fullMetricPagesReachLowFrequencyTailBeyondAllLegacyLimits() {
+      for (int i = 0; i < 231; i++) {
+         painting(i, "ACTIVE", "READY", true);
+         value(i, "legacy.style", "public", String.format("词%03d", i));
+      }
+      painting(1001, "ACTIVE", "READY", true);
+      value(1001, "legacy.style", "private", "SECRET_STYLE");
+      var overview = store.paintingStatistics();
+      assertEquals(12, overview.metrics().get("style").items().size());
+      assertTrue(overview.metrics().get("style").truncated());
+      var first = store.paintingMetric(new com.auralink.api.v1.knowledge.PaintingMetricQuery("style", 0, 100, "", "name", null));
+      assertEquals(231, first.totalItems());
+      assertEquals(3, first.totalPages());
+      var names = new ArrayList<String>();
+      for (int page = 0; page < first.totalPages(); page++) {
+         var result = store.paintingMetric(new com.auralink.api.v1.knowledge.PaintingMetricQuery("style", page, 100, "", "name", first.revision()));
+         names.addAll(result.items().stream().map(PaintingStatisticsResponse.Item::name).toList());
+         assertEquals(page < 2, result.hasMore());
+      }
+      assertEquals(231, names.size());
+      assertEquals(231, names.stream().distinct().count());
+      assertEquals("词230", names.get(names.size() - 1));
+      var tail = store.paintingMetric(new com.auralink.api.v1.knowledge.PaintingMetricQuery("style", 0, 100, "词230", "value", first.revision()));
+      assertEquals(List.of(new PaintingStatisticsResponse.Item("词230", 1)), tail.items());
+      var hidden = store.paintingMetric(new com.auralink.api.v1.knowledge.PaintingMetricQuery("style", 0, 100, "SECRET", "value", first.revision()));
+      assertTrue(hidden.items().isEmpty());
+   }
+
    private static PaintingStatisticsResponse.Metric metric(PaintingStatisticsResponse response,String key) {return response.metrics().get(key);}
    private static double item(PaintingStatisticsResponse response,String metric,String name) {
       return metric(response,metric).items().stream().filter(i->i.name().equals(name)).findFirst().orElseThrow().value();
