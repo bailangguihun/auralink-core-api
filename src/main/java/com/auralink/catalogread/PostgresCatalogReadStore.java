@@ -22,9 +22,11 @@ final class PostgresCatalogReadStore implements CatalogReadStore {
    private static final String BASE_SELECT = "SELECT p.public_id::text AS painting_id,\n       sr.source_record_key,\n       sr.record_number,\n       p.title,\n       p.author_name,\n       p.category,\n       p.catalog_status,\n       p.image_display_status,\n       sr.record_state,\n       ma.public_id::text AS image_asset_id,\n       ma.source_batch_id::text AS image_batch_id,\n       ma.source_revision AS image_revision,\n       ma.relative_path AS image_relative_path,\n       ma.storage_uri AS image_storage_uri,\n       ma.content_sha256 AS image_sha256,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.sequence') AS legacy_sequence,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.image_storage_name') AS legacy_image_storage_name,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'source.external_catalogue_id') AS external_catalogue_id,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'source.relative_image') AS relative_image,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.author_birth_year_text') AS author_birth_year,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.author_birth_place') AS author_birth_place,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.author_school') AS author_school,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.creation_year_text') AS creation_year,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.creation_dynasty_raw') AS creation_dynasty_raw,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.actual_size') AS actual_size,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.collection_institution') AS collection_institution,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.subject') AS subject,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.painting_school') AS painting_school,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.style') AS style,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.color') AS color,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.composition') AS composition,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.artistic_conception') AS artistic_conception,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.brushwork') AS brushwork,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.ink_method') AS ink_method,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.painting_material') AS painting_material,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.pigment') AS pigment,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.seal') AS seal,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.cultural_symbol') AS cultural_symbol,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.generated_text') AS generated_text,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.music_scene_description') AS music_scene_description,\n       MAX(ar.normalized_value) FILTER (WHERE ar.field_key = 'legacy.collection_platform') AS collection_platform\n";
    private static final String GROUP_BY = "GROUP BY p.public_id, sr.batch_id, sr.revision, sr.annotation_file_id, sr.record_number,\n         sr.source_record_key, sr.record_state, ma.public_id, ma.source_batch_id, ma.source_revision,\n         ma.relative_path, ma.storage_uri, ma.content_sha256\n";
    private final NamedParameterJdbcTemplate jdbc;
+   private final PostgresPaintingStatistics statistics;
 
    PostgresCatalogReadStore(NamedParameterJdbcTemplate jdbc) {
       this.jdbc = jdbc;
+      this.statistics = new PostgresPaintingStatistics(jdbc.getJdbcTemplate());
    }
 
    @Override
@@ -48,7 +50,17 @@ final class PostgresCatalogReadStore implements CatalogReadStore {
    @Override
    public com.auralink.api.v1.knowledge.PaintingStatisticsResponse paintingStatistics() {
       try {
-         return new PostgresPaintingStatistics(this.jdbc.getJdbcTemplate()).read();
+         return this.statistics.read();
+      } catch (DataAccessException exception) {
+         throw unavailable(exception);
+      }
+   }
+
+   @Override
+   public com.auralink.api.v1.knowledge.PaintingMetricPage paintingMetric(
+      com.auralink.api.v1.knowledge.PaintingMetricQuery query) {
+      try {
+         return this.statistics.page(query);
       } catch (DataAccessException exception) {
          throw unavailable(exception);
       }
