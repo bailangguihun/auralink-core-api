@@ -93,6 +93,7 @@ public class CreationSubmissionService {
    public CreationDetailResponse get(String creationId) {
       User owner = this.currentUserService.requireCurrentUser();
       Creation creation = this.findOwned(creationId, owner);
+      if (creation.getHistoryDeletedAt() != null) throw notFound();
       return this.responseMapper.detail(creation, this.steps.findByCreationIdOrderByStepIndexAsc(creation.getId()));
    }
 
@@ -105,7 +106,7 @@ public class CreationSubmissionService {
          if (size >= 1 && size <= this.properties.getMaxPageSize()) {
             User owner = this.currentUserService.requireCurrentUser();
             Page<Creation> result = this.creations
-               .findAllByUser_Id(
+               .findAllByUser_IdAndHistoryDeletedAtIsNull(
                   owner.getId(),
                   PageRequest.of(page, size, Sort.by(Direction.DESC, new String[]{"createdAt"}).and(Sort.by(Direction.DESC, new String[]{"publicId"})))
                );
@@ -115,6 +116,21 @@ public class CreationSubmissionService {
             throw new ApiV1Exception(HttpStatus.BAD_REQUEST, ApiErrorCode.INVALID_PAGE_SIZE, "每页数量超出允许范围");
          }
       }
+   }
+
+   /** Removes only the owner's history entry. Execution, favorites and media remain intact. */
+   @Transactional
+   public void deleteHistory(String creationId) {
+      User owner = this.currentUserService.requireCurrentUser();
+      Creation creation = this.findOwned(creationId, owner);
+      if (creation.getHistoryDeletedAt() != null) return;
+      // The conditional update shares the row lock with retrySafely. Whichever
+      // wins makes the other ineligible; an active task can never be hidden.
+      if (this.creations.deleteHistorySafely(creationId, owner.getId(), LocalDateTime.now(this.clock)) == 1) return;
+      Creation latest = this.findOwned(creationId, owner);
+      if (latest.getHistoryDeletedAt() != null) return;
+      throw new ApiV1Exception(HttpStatus.CONFLICT, ApiErrorCode.CREATION_DELETE_NOT_AVAILABLE,
+         "作品仍在排队或创作中，请等待执行结束后删除记录");
    }
 
    private CreationStep step(Creation creation, WorkflowExecutionPreparer.PreparedTransform transform, int index) {

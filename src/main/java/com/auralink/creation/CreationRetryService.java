@@ -58,6 +58,7 @@ public class CreationRetryService {
       String digest = this.digestIdempotencyKey(idempotencyKey);
       User owner = this.currentUserService.requireCurrentUser();
       Creation creation = this.findOwned(creationId, owner);
+      if (creation.getHistoryDeletedAt() != null) throw notFound();
       Optional<CreationExecutionAttempt> existing = this.executionAttempts.findByCreationIdAndRetryIdempotencyKeyDigest(creation.getId(), digest);
       if (existing.isPresent()) {
          CreationExecutionAttempt attempt = existing.get();

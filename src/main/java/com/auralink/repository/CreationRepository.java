@@ -24,6 +24,16 @@ public interface CreationRepository extends JpaRepository<Creation, Long> {
 
    Page<Creation> findAllByUser_Id(Long userId, Pageable pageable);
 
+   Page<Creation> findAllByUser_IdAndHistoryDeletedAtIsNull(Long userId, Pageable pageable);
+
+   @Modifying(flushAutomatically = true, clearAutomatically = true)
+   @Query(value = "UPDATE creations SET history_deleted_at = :now "
+      + "WHERE public_id = :publicId AND user_id = :userId AND history_deleted_at IS NULL "
+      + "AND status IN ('SUCCEEDED', 'PARTIAL_SUCCESS', 'FAILED') "
+      + "AND claim_token IS NULL AND lease_expires_at IS NULL", nativeQuery = true)
+   int deleteHistorySafely(@Param("publicId") String publicId, @Param("userId") Long userId,
+      @Param("now") LocalDateTime now);
+
    long countByStatusIn(Collection<String> statuses);
 
    Optional<Creation> findFirstByStatusOrderByCreatedAtAscIdAsc(String status);
@@ -161,7 +171,7 @@ public interface CreationRepository extends JpaRepository<Creation, Long> {
 
    @Modifying(flushAutomatically = true, clearAutomatically = true)
    @Query(
-      value = "UPDATE creations\nSET status = 'QUEUED', retry_version = retry_version + 1,\n    final_modality = NULL, final_asset_id = NULL, final_output_json = NULL,\n    started_at = NULL, finished_at = NULL, updated_at = :now,\n    error_code = NULL, error_message = NULL,\n    claim_token = NULL, lease_expires_at = NULL\nWHERE id = :creationId AND user_id = :userId\n  AND status IN ('FAILED', 'PARTIAL_SUCCESS')\n  AND retry_version = :expectedRetryVersion\n  AND claim_token IS NULL AND lease_expires_at IS NULL\n",
+      value = "UPDATE creations\nSET status = 'QUEUED', retry_version = retry_version + 1,\n    final_modality = NULL, final_asset_id = NULL, final_output_json = NULL,\n    started_at = NULL, finished_at = NULL, updated_at = :now,\n    error_code = NULL, error_message = NULL,\n    claim_token = NULL, lease_expires_at = NULL\nWHERE id = :creationId AND user_id = :userId\n  AND history_deleted_at IS NULL\n  AND status IN ('FAILED', 'PARTIAL_SUCCESS')\n  AND retry_version = :expectedRetryVersion\n  AND claim_token IS NULL AND lease_expires_at IS NULL\n",
       nativeQuery = true
    )
    int retrySafely(
