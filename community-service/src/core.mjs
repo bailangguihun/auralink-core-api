@@ -1,5 +1,19 @@
 import { Failure, uuid } from './errors.mjs';
 
+/** Return only the gallery's logical original-image path, never a remote URL or storage path. */
+function galleryImage(image) {
+  const match = typeof image?.contentUrl === 'string'
+    && /^\/api\/v1\/assets\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/content$/i.exec(image.contentUrl);
+  if (!match || image.assetId !== match[1]) return null;
+  const positive = value => Number.isSafeInteger(value) && value > 0 ? value : null;
+  return {
+    assetId: image.assetId, contentUrl: image.contentUrl,
+    downloadUrl: `/api/v1/assets/${image.assetId}/download`,
+    mimeType: typeof image.mimeType === 'string' && /^image\/[a-z0-9.+-]+$/i.test(image.mimeType) ? image.mimeType : '',
+    width: positive(image.width), height: positive(image.height), fileSize: positive(image.fileSize),
+  };
+}
+
 export function loopbackOrigin(value) {
   const url = new URL(value);
   if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname) ||
@@ -64,13 +78,14 @@ export class CoreClient {
         value.visibleInGallery !== true || value.imageAvailable !== true) {
       throw new Failure(404, 'SOURCE_UNAVAILABLE', '原作品不存在或暂不可访问。');
     }
-    // Phase one references the canonical authenticated platform page only.
-    // No image copying, URL fetching, rights assumptions, or AI distribution.
+    // Reuse the currently accessible gallery image; Community stores only its
+    // painting ID and never copies image bytes or fetches a supplied media URL.
     return {
       state: 'AVAILABLE', paintingId: id,
       title: typeof value.title === 'string' ? value.title.slice(0, 300) : '无题',
       authorName: typeof value.authorName === 'string' ? value.authorName.slice(0, 200) : '',
       period: typeof value.creationDynastyNormalized === 'string' ? value.creationDynastyNormalized.slice(0, 80) : '',
+      image: galleryImage(value.image),
     };
   }
   async reference(id, token) {

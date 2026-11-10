@@ -69,6 +69,11 @@ public class Creation extends BasePublicIdEntity {
    private String errorMessage;
    @Column(name = "updated_at", nullable = false)
    private LocalDateTime updatedAt;
+   @Column(name = "history_deleted_at")
+   private LocalDateTime historyDeletedAt;
+
+   public LocalDateTime getHistoryDeletedAt() { return this.historyDeletedAt; }
+
    @Column(name = "claim_token", length = 64)
    private String claimToken;
    @Column(name = "lease_expires_at")
