@@ -19,8 +19,12 @@ administrators, users, coins, posts or generated engagement.
 - Authenticated posts, comments, explicit like/favorite states and owner lists.
 - Gallery references retain the original UUID, validate at publication and
   revalidate for each viewer. Restricted sources hide their metadata.
-- Phase one displays a text card linked to the original. Thumbnail copying,
-  redistribution, AI rights and shared private uploads remain unimplemented.
+- References include the gallery's current original image as a validated logical
+  `/api/v1/assets/{assetId}/content` path, alongside the canonical artwork UUID.
+  No image bytes or image snapshots are copied or stored. Restricted references
+  omit metadata and images; missing or invalid media paths return `image: null`.
+  Existing posts need no migration. Web and this Node service must both be
+  updated for image previews; the Java JAR has no change for this feature.
 - Atomic per-actor request journal. Same request returns one result;
   changed payload under the same key is rejected. Lost replies use GET
   reconciliation; no automatic resend.

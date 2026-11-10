@@ -5,6 +5,12 @@ import { CommunityStore } from '../src/store.mjs';
 import { createCommunityServer } from '../src/server.mjs';
 
 export const paintingId = '23c2e7c7-3898-5ecd-9ca0-dc47fc7b2d39';
+export const paintingImage = {
+  assetId: 'b6b65b8d-50bf-45fb-b445-14d4f31fa4a2', mimeType: 'image/svg+xml', fileSize: null,
+  width: 640, height: 960,
+  contentUrl: '/api/v1/assets/b6b65b8d-50bf-45fb-b445-14d4f31fa4a2/content',
+  downloadUrl: '/api/v1/assets/b6b65b8d-50bf-45fb-b445-14d4f31fa4a2/download',
+};
 export async function listen(server, port = 0) {
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
   return 'http://127.0.0.1:' + server.address().port;
@@ -31,7 +37,7 @@ export async function fixture({ native = false, directory, corePort = 0 } = {}) 
   // A pre-existing schema rejects the fixture. Never DROP or overwrite a database.
   if (pg) await pg.exec(migration);
   else await database.query(migration);
-  const state = { available: true, sourceReads: 0, profileReads: 0, coreFail: false, writes: 0 };
+  const state = { available: true, sourceReads: 0, profileReads: 0, coreFail: false, writes: 0, image: paintingImage };
   const coreServer = http.createServer((req, res) => {
     res.setHeader('content-type', 'application/json');
     res.setHeader('access-control-allow-origin', '*');
@@ -39,6 +45,10 @@ export async function fixture({ native = false, directory, corePort = 0 } = {}) 
     res.setHeader('access-control-allow-methods', 'GET,OPTIONS');
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     if (req.method !== 'GET') { state.writes++; res.writeHead(405); return res.end('{}'); }
+    if (req.url === paintingImage.contentUrl) {
+      res.setHeader('content-type', 'image/svg+xml');
+      return res.end('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="960"><rect width="640" height="960" fill="#ede5d7"/><path d="M40 880L180 270L310 650L470 100L600 880Z" fill="#8b9685"/><rect x="8" y="8" width="624" height="944" fill="none" stroke="#775943" stroke-width="16"/></svg>');
+    }
     const token = req.headers.authorization;
     const id = token === 'Bearer FIXTURE_A' ? 101 : token === 'Bearer FIXTURE_B' ? 202 : null;
     if (!id) { res.writeHead(401); return res.end(JSON.stringify({ message: 'login required' })); }
@@ -53,8 +63,7 @@ export async function fixture({ native = false, directory, corePort = 0 } = {}) 
       if (!state.available) { res.writeHead(404); return res.end('{}'); }
       return res.end(JSON.stringify({ paintingId, title: '山水清音', authorName: '隔离测试作者',
         creationDynastyNormalized: '当代', visibleInGallery: true, imageAvailable: true, status: 'ACTIVE',
-        // Must never be fetched or leaked by Community.
-        image: { contentUrl: 'http://untrusted.invalid/private.png' } }));
+        image: state.image, favorited: false }));
     }
     if (req.url.startsWith('/api/v1/paintings?')) return res.end(JSON.stringify({
       items: state.available ? [{ paintingId, title: '山水清音', authorName: '隔离测试作者', imageAvailable: true,
