@@ -73,7 +73,7 @@ def main():
         sql('ledger', 'CREATE TABLE prototype_schema_migrations(version text PRIMARY KEY,checksum text NOT NULL);')
         migrations = list(sorted((ROOT/'tests/fixtures/full_startup').glob('V*.sql')))
         migrations += list(sorted((ROOT/'db/postgres/migrations').glob('V*.sql')))
-        assert len(migrations) == 16
+        assert len(migrations) == 17
         for p in migrations:
             raw=p.read_bytes(); digest=hashlib.sha256(raw).hexdigest()
             if p.name in manifest: assert digest == manifest[p.name]

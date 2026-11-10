@@ -95,6 +95,13 @@ jobs:
             ${{ runner.temp }}/full-startup-*/*.log
           if-no-files-found: warn
 
+      - name: Verify creation history deletion and PostgreSQL migrations
+        run: |
+          python3 -B tests/run_creation_history_postgres.py \
+            --fixture "$RUNNER_TEMP/creation-history-fixture" \
+            --pg-bin /usr/lib/postgresql/16/bin \
+            --pg-lib /usr/lib/x86_64-linux-gnu --port 55919
+
       - name: Check out pinned managed VMM interoperability fixture
         uses: actions/checkout@v4
         with:

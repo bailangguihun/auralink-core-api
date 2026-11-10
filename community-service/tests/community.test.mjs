@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { fixture, paintingId } from './support.mjs';
+import { fixture, paintingId, paintingImage } from './support.mjs';
 
 test('HTTP contract with isolated PostgreSQL engine and a contract-only Core fixture', async t => {
   const f = await fixture(); t.after(() => f.close());
@@ -35,11 +35,28 @@ test('HTTP contract with isolated PostgreSQL engine and a contract-only Core fix
   });
   await t.test('references are current; restricted artwork no longer exposes metadata', async () => {
     assert.equal((await f.request('/posts/' + postId)).data.galleryReference.title, '山水清音');
+    assert.deepEqual((await f.request('/posts/' + postId)).data.galleryReference.image, paintingImage);
+    assert.deepEqual((await f.request('/gallery-references/' + paintingId)).data.image, paintingImage);
+    assert.deepEqual((await f.request('/posts')).data.items[0].galleryReference.image, paintingImage);
     f.state.available = false;
     assert.deepEqual((await f.request('/posts/' + postId)).data.galleryReference, { state: 'UNAVAILABLE', paintingId });
     assert.equal((await f.request('/posts', { method: 'POST', payload: { ...payload, requestId: randomUUID() } })).status, 404);
     assert.equal((await f.request('/posts', { method: 'POST', payload })).data.result.postId, postId);
     f.state.available = true;
+  });
+  await t.test('image references never expose remote URLs, private paths or mismatched asset identities', async () => {
+    for (const image of [null, { ...paintingImage, contentUrl: 'https://untrusted.invalid/private.png' },
+      { ...paintingImage, contentUrl: '/root/private.png' }, { ...paintingImage, assetId: paintingId },
+      { ...paintingImage, contentUrl: paintingImage.contentUrl + '?token=private' }]) {
+      f.state.image = image;
+      const result = await f.request('/posts/' + postId);
+      assert.equal(result.status, 200); assert.equal(result.data.galleryReference.image, null);
+      assert(!JSON.stringify(result.data).includes('private'));
+    }
+    f.state.image = { ...paintingImage, width: -1, height: '960', internalPath: '/root/private.png', downloadUrl: 'https://untrusted.invalid' };
+    assert.deepEqual((await f.request('/gallery-references/' + paintingId)).data.image,
+      { ...paintingImage, width: null, height: null });
+    f.state.image = paintingImage;
   });
   await t.test('comments and reactions persist; explicit set operations do not toggle twice', async () => {
     const comment = { requestId: randomUUID(), content: '留白很有意境。' };

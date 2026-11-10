@@ -5,6 +5,7 @@ import com.auralink.creation.CreationSubmissionService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -37,6 +38,12 @@ public class CreationController {
    ) {
       CreationRetryService.RetryAdmission admission = this.retryService.retry(creationId, idempotencyKey, request);
       return ResponseEntity.status(admission.idempotentReplay() ? HttpStatus.OK : HttpStatus.ACCEPTED).body(admission.response());
+   }
+
+   @DeleteMapping("/me/creations/{creationId}")
+   public ResponseEntity<Void> deleteHistory(@PathVariable String creationId) {
+      this.creationService.deleteHistory(creationId);
+      return ResponseEntity.noContent().build();
    }
 
    @GetMapping("/me/creations")
