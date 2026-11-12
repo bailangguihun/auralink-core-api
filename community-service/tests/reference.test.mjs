@@ -58,6 +58,20 @@ test('reference 2.0: canonical posts, rich media, wallet, room ACL, live drawing
  }
  const ok=async(actor,path,options)=>{const response=await request(actor,path,options);assert(response.status<400,JSON.stringify({path,...response}));return response.data.data;};
  for(const actor of [101,202,303,404,505,606,707,808,909])await ok(actor,'/api/user/profile');
+ await t.test('retired poet and administration endpoints cannot read, write or call a provider',async()=>{
+  const before=await pg.query('SELECT (SELECT count(*) FROM community.v2_ai_messages) AS messages,(SELECT count(*) FROM community.v2_posts) AS posts,(SELECT count(*) FROM community.v2_operations) AS operations');
+  const calls=providerCalls.length;
+  for(const [method,path,body] of [
+   ['GET','/api/ai/agents'],['GET','/api/ai/agents/1/messages'],
+   ['POST','/api/ai/test',{}],['POST','/api/ai/agents/1/chat',{message:'写一首诗'}],
+   ['GET','/api/admin/ai/settings'],['PUT','/api/admin/ai/settings',{holidayTheme:'春日'}],
+   ['PUT','/api/admin/ai/agents/1',{persona:'fixture'}],['POST','/api/admin/ai/publish',{content:'不应发布'}],
+  ])assert.equal((await request(404,path,{method,body})).status,404,path);
+  assert.equal(providerCalls.length,calls);
+  assert.deepEqual((await pg.query('SELECT (SELECT count(*) FROM community.v2_ai_messages) AS messages,(SELECT count(*) FROM community.v2_posts) AS posts,(SELECT count(*) FROM community.v2_operations) AS operations')).rows,before.rows);
+  const capabilities=await fetch(base+'/api/v1/community/capabilities',{headers:{authorization:'Bearer 101'}}).then(response=>response.json());
+  assert.equal(capabilities.ai,false);assert.equal(capabilities.aiCritique,true);
+ });
  let post;
  await t.test('pure media, tags, canonical UUID bridge, comments and quote snapshots',async()=>{
   const png=await sharp({create:{width:240,height:180,channels:3,background:'#f6f0e5'}}).png().toBuffer();
@@ -136,8 +150,7 @@ test('reference 2.0: canonical posts, rich media, wallet, room ACL, live drawing
   assert.equal(annotation.version,1);
   assert.equal((await request(202,`/api/v2/annotations/${annotation.id}`,{method:'PATCH',body:{version:0,content:'过期编辑'}})).status,409);
  });
- await t.test('AI poets, explicit image consent, editable AI drafts and no stored credentials',async()=>{
-  const chat=await ok(202,'/api/ai/agents/1/chat',{method:'POST',body:{message:'写一首山水诗'}});assert.equal(chat.provider,'local');
+ await t.test('room critique keeps explicit image consent, editable AI drafts and no stored credentials',async()=>{
   const headers={'x-deepseek-key':'sk-fixture-secret-never-store','x-deepseek-model':'fixture-vision'};
   const path=`/api/v2/rooms/${room.id}/artwork-sessions/${session.id}/ai-critiques`;
   const geometry={x:.1,y:.1,width:.3,height:.3};

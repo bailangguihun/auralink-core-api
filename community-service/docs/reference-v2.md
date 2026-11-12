@@ -18,12 +18,12 @@
 | [gateway.mjs](../src/v2/gateway.mjs) | 平台身份、媒体会话、单次 WS ticket、请求回执、来源与媒体所有权检查 |
 | [database.mjs](../src/v2/database.mjs) | 有限 SQL 方言适配、参数绑定、异步事务上下文与写入顺序 |
 | [tables.mjs](../src/v2/tables.mjs) | 审查过的表名映射到 `community.v2_*` |
-| [posts.mjs](../src/v2/posts.mjs) | 原版帖子、引用、评论、搜索、标签、通知、墨币、AI 与管理 |
+| [posts.mjs](../src/v2/posts.mjs) | 帖子、引用、评论、搜索、标签、通知、墨币、房间 AI 点评与管理 |
 | [rooms.mjs](../src/v2/rooms.mjs) | 原版房间、作品、标注、绘制、成员、门票、共享及语音信令 |
 
 Core 新增认证接口 `GET /api/user/community-identity`，返回平台 ID、账号名、展示名、邮箱和实际 authorities。Community 通过此接口核实 bearer token，管理员入口只认 Core 的 `ROLE_ADMIN`，不接受浏览器指定角色。不另发 JWT，不复制平台签名密钥，不保存社区密码。
 
-`v2_users.id` 使用已有平台数字 ID；用户名以 Core 为准。社区昵称、头像、邮箱为社区展示资料，不构成第二套登录。专家资格为社区管理记录，不等同于平台管理员角色。迁移显式加入一个标明 AI 的文化智能体身份及诗人配置，不赋予其真人登录或认证专家资格。
+`v2_users.id` 使用已有平台数字 ID；用户名以 Core 为准。社区昵称、头像、邮箱为社区展示资料，不构成第二套登录。专家资格为社区管理记录，不等同于平台管理员角色。原始 003 迁移包含标明 AI 的历史文化智能体身份和诗人表。AI 诗人功能现已移除，历史表和数据保留，既有迁移及其摘要不改写；这些历史记录不赋予真人登录或认证专家资格。
 
 ## 显式 003 迁移和兼容投影
 
@@ -56,7 +56,8 @@ Node 网关前缀为 `/api/v2/community`，表中的原版路径附在该前缀�
 | `/api/v2/rooms/{roomId}/artwork-sessions` | 当前及历史作品、标注、绘制、AI 草稿 |
 | `/api/v2/annotations/{id}`、`/api/v2/drawings/{id}` | 版本/权限检查、隐藏、恢复和删除 |
 | `/api/v2/rooms/{id}/messages`、`/share` | 聊天游标历史、共享申请/批准/停止 |
-| `/api/ai/*`、`/api/admin/*` | AI 诗人与 BYOK、模型测试；管理、认证专家及退款能力 |
+| `/api/admin/*`（不含 `/api/admin/ai/*`） | 内容管理、认证专家及退款能力 |
+| `/api/ai/*`、`/api/admin/ai/*` | AI 诗人及其运营已移除，全部返回 404 |
 | `/api/media-session`、`/api/ws-ticket`、`/api/operations/{requestId}` | 媒体会话、实时连接凭证及账号范围内的操作核对 |
 
 帖子编辑 PUT 是后端能力；原版 reference 页面没有帖子编辑按钮。匹配 Web 的作品编辑通过保留的成长对话框提供，不能把它表述为原版页面自带的编辑入口。
@@ -75,7 +76,9 @@ HTTP 验证实际平台身份和来源。媒体会话 cookie 仅包含不透明�
 
 ## AI 与外部资料
 
-保留 AI 诗人、主题/人格配置、显式同意后的整图/局部图点评及可编辑草稿。无服务端 Key 的诗人回复使用明确标识的本地规则，不声称真实模型已调用。BYOK 从 `x-deepseek-key`、`x-deepseek-model` 读取，Key 不写入消息、草稿或操作回执；原版模型请求与有限重试逻辑保留。
+AI 诗人聊天、本地诗人回复、主题/人格运营与诗词发布路由已移除，网关拒绝整个 `/api/ai` 和 `/api/admin/ai` 命名空间，不调用提供商或写入操作回执。capabilities 的 `ai` 为 false，`aiCritique` 表示房间辅助点评可用。
+
+保留显式同意后的整图/局部图点评及可编辑草稿。房间 BYOK 从 `x-deepseek-key`、`x-deepseek-model` 读取，Key 不写入草稿或操作回执；原版模型请求与有限重试逻辑保留。
 
 源码可读取私有 `COMMUNITY_DEEPSEEK_API_KEY`，但当前 Deploy 生命周期只允许既有 Community 配置及媒体根；它没有因本轮代码自动获得服务端提供商配置。生产如需该配置，必须纳入受管合同，不可绕过原环境隔离。房间图片传给提供商必须明确 `consent:true`；联网知识检索与可替换 provider 只在模拟接口测试中验证，真实付费模型未验。
 

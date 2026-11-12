@@ -55,7 +55,7 @@ export function createCommunityServer({ store, core, allowedOrigin, media = null
       if (req.method === 'GET' && path === '/capabilities') return reply(res, 200, {
         contractVersion: 1, actor, posts: true, galleryReferences: true,
         uploads: Boolean(store.learning && media), growth: Boolean(store.learning), search: Boolean(store.learning),
-        notifications: Boolean(store.learning), cases: Boolean(store.learning), rooms: Boolean(reference), voice: Boolean(reference), coins: Boolean(reference), ai: Boolean(reference),
+        notifications: Boolean(store.learning), cases: Boolean(store.learning), rooms: Boolean(reference), voice: Boolean(reference), coins: Boolean(reference), ai: false, aiCritique: Boolean(reference),
       });
       if (await learningRoute({ req, res, path, url, actor, store, media, body, pageQuery, reply })) return;
       const operationMatch = path.match(/^\/operations\/([^/]+)$/);

@@ -85,12 +85,13 @@ export async function createReferenceGateway({database,core,mediaRoot,allowedOri
   let acquiredAI=false;
   try{
    if(req.headers.origin&&req.headers.origin!==allowedOrigin)return json(res,403,'来源不允许'),true;
+   if(/^\/api\/(?:admin\/)?ai(?:\/|$)/.test(localPath))return json(res,404,'接口不存在'),true;
    const mediaRead=['GET','HEAD'].includes(req.method)&&(localPath.startsWith('/uploads/')||localPath.startsWith('/legacy-media/')||localPath.startsWith('/gallery-media/')||/\/file(?:\/|$)/.test(localPath));
    let token=(req.headers.authorization||'').replace(/^Bearer /,'');
    if(!token&&mediaRead){prune(grants);const key=String(req.headers.cookie||'').split(';').map(v=>v.trim()).find(v=>v.startsWith('artlive_community_media='))?.split('=')[1];token=grants.get(key)?.token||'';}
    if(!token)return json(res,401,'请先登录'),true;
    const actor=await actorFor(token,true);
-   const aiCommand=req.method==='POST'&&(/^\/api\/ai\/(test|agents\/\d+\/chat)$/.test(localPath)||localPath==='/api/admin/ai/publish'||localPath.endsWith('/ai-critiques'));
+   const aiCommand=req.method==='POST'&&localPath.endsWith('/ai-critiques');
    if(aiCommand){if(activeAI>=2)return json(res,429,'当前正在处理其他 AI 请求，请稍后再试'),true;activeAI++;acquiredAI=true;}
    req.communityUser=await db.unit(()=>syncIdentity(actor));req.headers.authorization='Bearer '+token;
    const cookieGrant=String(req.headers.cookie||'').split(';').map(value=>value.trim()).find(value=>value.startsWith('artlive_community_media='))?.split('=')[1];
