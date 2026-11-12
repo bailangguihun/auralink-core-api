@@ -4,11 +4,15 @@ import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 import zipfile
 
 FILES = ('package.json', 'package-lock.json', 'db/001_foundation.sql',
+         'db/002_learning_community.sql', 'src/learning-contract.mjs', 'src/learning-store.mjs',
+         'src/learning-routes.mjs', 'src/learning-media.mjs',
          'src/main.mjs', 'src/server.mjs', 'src/store.mjs', 'src/database.mjs',
          'src/core.mjs', 'src/errors.mjs', 'src/media.mjs')
 
@@ -29,25 +33,45 @@ def materialize(source, provenance, node_version):
     require(version >= (22, 13, 0), 'Node minimum')
     lock = json.loads((source / 'package-lock.json').read_bytes())
     require(lock['lockfileVersion'] == 3, 'lockfile version')
-    require(json.loads((source / 'package.json').read_bytes())['dependencies'] ==
+    dependencies = json.loads((source / 'package.json').read_bytes())['dependencies']
+    require(dependencies ==
             lock['packages']['']['dependencies'], 'manifest/lock dependencies')
     packages = {p: v for p, v in lock['packages'].items() if p and not v.get('dev')}
+    installed_packages = {}
     for name, value in packages.items():
         require(name.startswith('node_modules/') and '..' not in name.split('/'), 'dependency path')
         require(value.get('integrity') and value.get('resolved', '').startswith('https://registry.npmjs.org/'), 'locked registry dependency')
         installed = source / name / 'package.json'
+        if not installed.is_file() and value.get('optional'):
+            # npm also omits transitive dependencies of optional platform/wasm
+            # packages. The native decoder execution probe below remains required.
+            continue
         require(installed.is_file(), 'missing production dependency: ' + name)
         require(json.loads(installed.read_bytes())['version'] == value['version'], 'dependency version')
+        installed_packages[name] = value
     files = {p: source / p for p in FILES}
     for path in (source / 'node_modules').rglob('*'):
+        if path.relative_to(source).parts[1] == '.bin':
+            continue  # npm CLI shims are not imported or shipped by this service.
         require(not path.is_symlink(), 'dependency symlink')
         if path.is_dir():
             continue
         name = path.relative_to(source).as_posix()
         if name == 'node_modules/.package-lock.json':
             continue  # npm install metadata is not executed or shipped.
-        require(any(name.startswith(p + '/') for p in packages), 'unexpected/dev dependency: ' + name)
+        require(any(name.startswith(p + '/') for p in installed_packages), 'unexpected/dev dependency: ' + name)
         files[name] = path
+    runtime_platform = None
+    if 'sharp' in dependencies:
+        # Optional binaries for other hosts may be absent, but the actual target
+        # decoder must execute. Missing/broken native bindings fail packaging.
+        probe = subprocess.run(['node', '--input-type=module', '-e',
+            "import sharp from 'sharp'; await sharp({create:{width:1,height:1,channels:3,background:'white'}}).png().toBuffer(); console.log(JSON.stringify({os:process.platform,arch:process.arch,libc:process.report.getReport().header.glibcVersionRuntime?'glibc':'musl',sharp:sharp.versions.sharp}));"],
+            cwd=source, env={'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'LANG':'C.UTF-8'},
+            capture_output=True, text=True, timeout=20)
+        require(probe.returncode == 0, 'native image decoder does not execute')
+        runtime_platform = json.loads(probe.stdout)
+        require(runtime_platform['os'] == 'linux' and runtime_platform['arch'] in ('x64','arm64'), 'unsupported native target')
     archive, records = io.BytesIO(), []
     with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_STORED) as z:
         for name, path in sorted(files.items()):
@@ -62,7 +86,10 @@ def materialize(source, provenance, node_version):
     raw = archive.getvalue()
     manifest = dict(schema='artlive-community-bundle/v1', **provenance,
                     build_node=node_version, runtime_node_min='22.13.0', contract_version=1,
-                    database_schema_version=1, archive_sha256=hashlib.sha256(raw).hexdigest(), files=records)
+                    database_schema_version=1, learning_schema_version=2,
+                    archive_sha256=hashlib.sha256(raw).hexdigest(), files=records)
+    if runtime_platform:
+        manifest['runtime_platform'] = runtime_platform
     return raw, (json.dumps(manifest, sort_keys=True, separators=(',', ':'))+'\n').encode()
 
 

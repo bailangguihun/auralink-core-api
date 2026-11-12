@@ -1,5 +1,9 @@
 # ArtLIVE community foundation
 
+The current additive image/growth upgrade is documented in [LEARNING.md](LEARNING.md).
+The foundation contract below describes schema 1; schema 2 capabilities are
+enabled only after explicit migration and managed media configuration.
+
 Status: integration and publication candidate; not an installed production
 service. Core JWT validation now checks current account status before accepting
 an existing token. Core migrations, VMM and existing data remain unchanged.
@@ -31,13 +35,14 @@ administrators, users, coins, posts or generated engagement.
 - GET does not create accounts, wallets, rewards or settlements.
 - No static /uploads mount. A reserved media primitive authorizes first and
   emits exactly one 200/206/416 response; its tests use real local HTTP.
-- Capabilities disable uploads, rooms, voice, coins and AI.
+- Foundation capabilities disable uploads. Schema 2 can enable uploads and
+  growth; rooms, voice, coins and model calls remain disabled.
 
 Input archive SHA-256:
 b5c3dda47c7cda3c74b25360babb49a8bec46071c12baaea19e36a6ab2627ecf
 
-Room, quoted-post, tags, notifications, moderation, multimedia and wallet
-logic remain tracked for subsequent phases, not silently declared migrated.
+Rooms, quoted posts, moderation and wallets remain subsequent work. Tags,
+notifications, static image uploads and artwork growth are described in LEARNING.md.
 
 ## API contract
 
