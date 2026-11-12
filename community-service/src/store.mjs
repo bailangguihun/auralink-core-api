@@ -3,6 +3,9 @@ import { Failure } from './errors.mjs';
 
 export class CommunityStore {
   constructor(database) { this.db = database; }
+  postVisibility(alias) {
+    return this.reference ? ` AND NOT EXISTS(SELECT 1 FROM community.v2_users banned WHERE banned.id=${alias}.author_id AND banned.status<>0)` : '';
+  }
   async ready() {
     const result = await this.db.query('SELECT version FROM community.schema_version ORDER BY version');
     return result.rows.length === 1 && result.rows[0].version === 1;
@@ -19,6 +22,11 @@ export class CommunityStore {
     return this.db.transaction(async client => {
       await client.query('SET LOCAL statement_timeout = 5000');
       await client.query('SET LOCAL lock_timeout = 2000');
+      if(this.reference){
+        await client.query('SELECT pg_advisory_xact_lock(194717,3)');
+        const user=(await client.query('SELECT status FROM community.v2_users WHERE id=$1',[actor.id])).rows[0];
+        if(!user||user.status!==0)throw new Failure(403,'COMMUNITY_ACCOUNT_DISABLED','账号已被禁用');
+      }
       await client.query(
         'INSERT INTO community.operations(user_id,request_id,fingerprint) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',
         [actor.id, requestId, fingerprint]);
@@ -38,7 +46,7 @@ export class CommunityStore {
     });
   }
   async activePost(client, id, owner = null) {
-    const row = (await client.query("SELECT id,author_id FROM community.posts WHERE id=$1 AND status='ACTIVE' FOR UPDATE", [id])).rows[0];
+    const row = (await client.query(`SELECT id,author_id FROM community.posts p WHERE id=$1 AND status='ACTIVE'${this.postVisibility('p')} FOR UPDATE`, [id])).rows[0];
     if (!row) throw new Failure(404, 'POST_NOT_FOUND', '帖子不存在或已删除。');
     if (owner && String(row.author_id) !== owner) throw new Failure(403, 'POST_FORBIDDEN', '只能删除自己的帖子。');
     return row;

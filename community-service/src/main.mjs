@@ -3,6 +3,7 @@ import { postgresDatabase } from './database.mjs';
 import { CommunityStore } from './learning-store.mjs';
 import { createCommunityServer } from './server.mjs';
 import { CommunityMedia } from './learning-media.mjs';
+import {createReferenceGateway} from './v2/gateway.mjs';
 
 const origin = new URL(process.env.COMMUNITY_WEB_ORIGIN || '');
 if (!['http:', 'https:'].includes(origin.protocol) || origin.username || origin.password || origin.href !== origin.origin + '/') {
@@ -16,7 +17,8 @@ await database.verifyRuntimeRole();
 const store = new CommunityStore(database);
 if (!await store.ready()) throw new Error('Explicit community migration is required');
 const media = store.learning && process.env.COMMUNITY_MEDIA_ROOT ? new CommunityMedia(process.env.COMMUNITY_MEDIA_ROOT, store) : null;
-const server = createCommunityServer({ store, core, media, allowedOrigin: origin.origin });
+const reference=store.reference&&process.env.COMMUNITY_MEDIA_ROOT?await createReferenceGateway({database,core,mediaRoot:process.env.COMMUNITY_MEDIA_ROOT,allowedOrigin:origin.origin}):null;
+const server = createCommunityServer({ store, core, media, reference, allowedOrigin: origin.origin });
 server.listen(port, '127.0.0.1', () => console.log(JSON.stringify({ event: 'community_ready', port })));
 let closing = false;
 async function close() {

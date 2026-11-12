@@ -29,30 +29,33 @@ function pageQuery(url, allowed = ['page', 'size']) {
   if (!Number.isSafeInteger(page) || page < 0 || page > 10000 || !Number.isInteger(size) || size < 1 || size > 24) throw invalid();
   return { page, size };
 }
-export function createCommunityServer({ store, core, allowedOrigin, media = null, logger = console }) {
+export function createCommunityServer({ store, core, allowedOrigin, media = null, reference = null, logger = console }) {
   let active = 0, draining = false;
   const idleWaiters = new Set();
-  const server = http.createServer({ requestTimeout: 15000, headersTimeout: 10000, maxHeaderSize: 16384 }, async (req, res) => {
+  const server = http.createServer({ requestTimeout: reference ? 180000 : 15000, headersTimeout: 10000, maxHeaderSize: 16384 }, async (req, res) => {
     if (draining) return reply(res, 503, { code: 'COMMUNITY_DRAINING', message: '社区维护中，请稍后再来。' });
     active++;
     const correlationId = randomUUID();
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
+      if(reference && await reference.handle(req,res))return;
       if (url.pathname === '/health' && req.method === 'GET') {
         if (!await store.ready()) throw new Error('schema mismatch');
         return reply(res, 200, { status: 'UP', contractVersion: 1 });
       }
-      if (!url.pathname.startsWith(PREFIX + '/')) throw new Failure(404, 'NOT_FOUND', '接口不存在。');
+      const currentUrl = new URL(req.url, 'http://127.0.0.1');
+      if (!currentUrl.pathname.startsWith(PREFIX + '/')) throw new Failure(404, 'NOT_FOUND', '接口不存在。');
       if (req.headers.origin && req.headers.origin !== allowedOrigin) throw new Failure(403, 'ORIGIN_REJECTED', '来源不允许。');
       const auth = req.headers.authorization;
       if (typeof auth !== 'string' || !/^Bearer [^\s,]{1,8192}$/.test(auth)) throw new Failure(401, 'UNAUTHORIZED', '请先登录。');
       const token = auth.slice(7);
       const actor = await core.authenticate(token);
-      const path = url.pathname.slice(PREFIX.length);
+      if(reference)await reference.authorizeLegacy(actor,token);
+      const path = currentUrl.pathname.slice(PREFIX.length);
       if (req.method === 'GET' && path === '/capabilities') return reply(res, 200, {
         contractVersion: 1, actor, posts: true, galleryReferences: true,
         uploads: Boolean(store.learning && media), growth: Boolean(store.learning), search: Boolean(store.learning),
-        notifications: Boolean(store.learning), cases: Boolean(store.learning), rooms: false, voice: false, coins: false, ai: false,
+        notifications: Boolean(store.learning), cases: Boolean(store.learning), rooms: Boolean(reference), voice: Boolean(reference), coins: Boolean(reference), ai: Boolean(reference),
       });
       if (await learningRoute({ req, res, path, url, actor, store, media, body, pageQuery, reply })) return;
       const operationMatch = path.match(/^\/operations\/([^/]+)$/);
@@ -122,6 +125,7 @@ export function createCommunityServer({ store, core, allowedOrigin, media = null
       if (active === 0) { for (const resolve of idleWaiters) resolve(); idleWaiters.clear(); }
     }
   });
+  reference?.attach(server);
   // HTTP disconnect is not cancellation of a database transaction. Keep tracking
   // the handler until it finishes, even if server.close has no sockets left.
   let closing;
@@ -130,7 +134,7 @@ export function createCommunityServer({ store, core, allowedOrigin, media = null
     draining = true;
     const idle = active === 0 ? Promise.resolve() : new Promise(resolve => idleWaiters.add(resolve));
     const sockets = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    closing = Promise.all([idle, sockets]);
+    closing = Promise.all([idle, sockets, reference?.close()]);
     return closing;
   };
   return server;

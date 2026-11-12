@@ -15,6 +15,8 @@ FILES = ('package.json', 'package-lock.json', 'db/001_foundation.sql',
          'src/learning-routes.mjs', 'src/learning-media.mjs',
          'src/main.mjs', 'src/server.mjs', 'src/store.mjs', 'src/database.mjs',
          'src/core.mjs', 'src/errors.mjs', 'src/media.mjs')
+REFERENCE_FILES = ('db/003_reference_community.sql','src/v2/database.mjs','src/v2/tables.mjs',
+                   'src/v2/posts.mjs','src/v2/rooms.mjs','src/v2/gateway.mjs')
 
 
 def require(value, message):
@@ -49,7 +51,8 @@ def materialize(source, provenance, node_version):
         require(installed.is_file(), 'missing production dependency: ' + name)
         require(json.loads(installed.read_bytes())['version'] == value['version'], 'dependency version')
         installed_packages[name] = value
-    files = {p: source / p for p in FILES}
+    reference = (source / 'db/003_reference_community.sql').is_file()
+    files = {p: source / p for p in FILES + (REFERENCE_FILES if reference else ())}
     for path in (source / 'node_modules').rglob('*'):
         if path.relative_to(source).parts[1] == '.bin':
             continue  # npm CLI shims are not imported or shipped by this service.
@@ -90,6 +93,8 @@ def materialize(source, provenance, node_version):
                     archive_sha256=hashlib.sha256(raw).hexdigest(), files=records)
     if runtime_platform:
         manifest['runtime_platform'] = runtime_platform
+    if reference:
+        manifest['reference_schema_version'] = 3
     return raw, (json.dumps(manifest, sort_keys=True, separators=(',', ':'))+'\n').encode()
 
 

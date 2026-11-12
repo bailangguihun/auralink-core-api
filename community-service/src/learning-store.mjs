@@ -8,7 +8,8 @@ export class CommunityStore extends FoundationStore {
   learning = false;
   async ready() {
     const rows = (await this.db.query('SELECT version FROM community.schema_version ORDER BY version')).rows;
-    this.learning = rows.length === 2 && rows[0].version === 1 && rows[1].version === 2;
+    this.reference = rows.length === 3 && rows[0].version === 1 && rows[1].version === 2 && rows[2].version === 3;
+    this.learning = this.reference || rows.length === 2 && rows[0].version === 1 && rows[1].version === 2;
     return this.learning || rows.length === 1 && rows[0].version === 1;
   }
   async notify(client, recipient, actor, postId, kind) {
@@ -60,7 +61,7 @@ export class CommunityStore extends FoundationStore {
       const post = await this.ownedPost(client, postId);
       let parent;
       if (body.parentId) {
-        parent = (await client.query('SELECT author_id FROM community.comments WHERE id=$1 AND post_id=$2', [body.parentId, postId])).rows[0];
+        parent = (await client.query(`SELECT author_id FROM community.comments WHERE id=$1 AND post_id=$2${this.reference?' AND NOT reference_deleted':''}`, [body.parentId, postId])).rows[0];
         if (!parent) throw invalid('回复的评论不存在。');
       }
       if (body.revisionId && !(await client.query('SELECT id FROM community.artwork_revisions WHERE id=$1 AND post_id=$2', [body.revisionId, postId])).rows.length) throw invalid('作品版本不存在。');
@@ -90,11 +91,11 @@ export class CommunityStore extends FoundationStore {
   async posts(actor, page, size, view, id = null, filters = {}) {
     if (!this.learning) return super.posts(actor, page, size, view, id);
     const result = await this.db.query('SELECT p.*,u.display_name,' +
-      '(SELECT count(*)::integer FROM community.comments c WHERE c.post_id=p.id) AS comment_count,' +
+      `(SELECT count(*)::integer FROM community.comments c WHERE c.post_id=p.id${this.reference?' AND NOT c.reference_deleted':''}) AS comment_count,` +
       "(SELECT count(*)::integer FROM community.reactions r WHERE r.post_id=p.id AND r.kind='like') AS like_count," +
       "EXISTS(SELECT 1 FROM community.reactions r WHERE r.post_id=p.id AND r.user_id=$1 AND r.kind='like') AS liked," +
       "EXISTS(SELECT 1 FROM community.reactions r WHERE r.post_id=p.id AND r.user_id=$1 AND r.kind='favorite') AS favorited " +
-      "FROM community.posts p JOIN community.profiles u ON u.user_id=p.author_id WHERE p.status='ACTIVE' " +
+      "FROM community.posts p JOIN community.profiles u ON u.user_id=p.author_id WHERE p.status='ACTIVE' " + this.postVisibility('p') +
       "AND ($2::uuid IS NULL OR p.id=$2) AND ($3='all' OR ($3='mine' AND p.author_id=$1) OR ($3='favorites' AND " +
       "EXISTS(SELECT 1 FROM community.reactions r WHERE r.post_id=p.id AND r.user_id=$1 AND r.kind='favorite'))) " +
       "AND ($6='' OR p.content ILIKE '%'||$6||'%' OR p.title ILIKE '%'||$6||'%' OR u.display_name ILIKE '%'||$6||'%') " +
@@ -123,7 +124,7 @@ export class CommunityStore extends FoundationStore {
       'FROM community.comments c JOIN community.profiles u ON u.user_id=c.author_id ' +
       'LEFT JOIN community.comments pc ON pc.id=c.parent_id LEFT JOIN community.profiles parent ON parent.user_id=pc.author_id ' +
       'LEFT JOIN community.artwork_revisions r ON r.id=c.revision_id ' +
-      'WHERE c.post_id=$1 ORDER BY c.created_at,c.id LIMIT $2 OFFSET $3', [postId, size + 1, page * size])).rows;
+      `WHERE c.post_id=$1${this.reference?' AND NOT c.reference_deleted AND NOT EXISTS(SELECT 1 FROM community.v2_users banned WHERE banned.id=c.author_id AND banned.status<>0)':''} ORDER BY c.created_at,c.id LIMIT $2 OFFSET $3`, [postId, size + 1, page * size])).rows;
     return { page, hasNext: rows.length > size, items: rows.slice(0, size).map(row => this.commentView(row)) };
   }
   commentView(row) {
@@ -133,12 +134,12 @@ export class CommunityStore extends FoundationStore {
       suggestion: row.suggestion, adopted: row.adopted, revisionId: row.revision_id, revisionNumber: row.version_number || null };
   }
   async commentDetail(commentId) {
-    const row = (await this.db.query("SELECT c.*,u.display_name,r.version_number FROM community.comments c JOIN community.posts p ON p.id=c.post_id AND p.status='ACTIVE' JOIN community.profiles u ON u.user_id=c.author_id LEFT JOIN community.artwork_revisions r ON r.id=c.revision_id WHERE c.id=$1", [commentId])).rows[0];
+    const row = (await this.db.query(`SELECT c.*,u.display_name,r.version_number FROM community.comments c JOIN community.posts p ON p.id=c.post_id AND p.status='ACTIVE' JOIN community.profiles u ON u.user_id=c.author_id LEFT JOIN community.artwork_revisions r ON r.id=c.revision_id WHERE c.id=$1${this.reference?' AND NOT c.reference_deleted AND NOT EXISTS(SELECT 1 FROM community.v2_users banned WHERE banned.id=c.author_id AND banned.status<>0)':''}${this.postVisibility('p')}`, [commentId])).rows[0];
     if (!row) throw new Failure(404, 'COMMENT_UNAVAILABLE', '原点评不存在或已不可查看。');
     return { ...this.commentView(row), postId: row.post_id };
   }
   async activeRead(postId, owner) {
-    const row = (await this.db.query("SELECT * FROM community.posts WHERE id=$1 AND status='ACTIVE'", [postId])).rows[0];
+    const row = (await this.db.query(`SELECT * FROM community.posts p WHERE id=$1 AND status='ACTIVE'${this.postVisibility('p')}`, [postId])).rows[0];
     if (!row) throw new Failure(404, 'POST_NOT_FOUND', '帖子不存在或已删除。');
     if (owner && String(row.author_id) !== owner.id) throw new Failure(403, 'POST_FORBIDDEN', '只能修改自己的作品。');
     return row;
@@ -146,7 +147,7 @@ export class CommunityStore extends FoundationStore {
   adopt(actor, requestId, commentId, enabled) {
     return this.mutate(actor, requestId, ['adopt', commentId, enabled], async client => {
       const comment = (await client.query('SELECT * FROM community.comments WHERE id=$1', [commentId])).rows[0];
-      if (!comment || !comment.dimension) throw invalid('请选择一条作品点评。');
+      if (!comment || comment.reference_deleted || !comment.dimension) throw invalid('请选择一条作品点评。');
       await this.ownedPost(client, comment.post_id, actor);
       await client.query('UPDATE community.comments SET adopted=$2 WHERE id=$1', [commentId, enabled]);
       if (enabled && !comment.adopted) await this.notify(client, comment.author_id, actor, comment.post_id, 'adopt');
@@ -250,14 +251,14 @@ export class CommunityStore extends FoundationStore {
     });
   }
   async cases(page, size, query, dimension) {
-    const result = await this.db.query("SELECT c.* FROM community.knowledge_cases c JOIN community.posts p ON p.id=c.post_id WHERE c.status='published' AND p.status='ACTIVE' " +
+    const result = await this.db.query("SELECT c.* FROM community.knowledge_cases c JOIN community.posts p ON p.id=c.post_id WHERE c.status='published' AND p.status='ACTIVE' " + this.postVisibility('p') +
       "AND ($3='' OR c.title ILIKE '%'||$3||'%' OR c.summary ILIKE '%'||$3||'%') AND ($4='' OR $4=ANY(c.dimensions)) ORDER BY c.published_at DESC,c.id DESC LIMIT $1 OFFSET $2", [size + 1, page * size, query, dimension]);
     return { items: result.rows.slice(0, size).map(row => this.caseView(row)), page, hasNext: result.rows.length > size };
   }
   async notifications(actor, page, size) {
     const [result, unread] = await Promise.all([
-      this.db.query("SELECT n.*,u.display_name,p.title FROM community.notifications n JOIN community.posts p ON p.id=n.post_id AND p.status='ACTIVE' JOIN community.profiles u ON u.user_id=n.actor_id WHERE n.user_id=$1 ORDER BY n.created_at DESC,n.id DESC LIMIT $2 OFFSET $3", [actor.id, size + 1, page * size]),
-      this.db.query("SELECT count(*)::integer AS n FROM community.notifications n JOIN community.posts p ON p.id=n.post_id AND p.status='ACTIVE' WHERE n.user_id=$1 AND n.read_at IS NULL", [actor.id]),
+      this.db.query(`SELECT n.*,u.display_name,p.title FROM community.notifications n JOIN community.posts p ON p.id=n.post_id AND p.status='ACTIVE' JOIN community.profiles u ON u.user_id=n.actor_id WHERE n.user_id=$1${this.postVisibility('p')} ORDER BY n.created_at DESC,n.id DESC LIMIT $2 OFFSET $3`, [actor.id, size + 1, page * size]),
+      this.db.query(`SELECT count(*)::integer AS n FROM community.notifications n JOIN community.posts p ON p.id=n.post_id AND p.status='ACTIVE' WHERE n.user_id=$1 AND n.read_at IS NULL${this.postVisibility('p')}`, [actor.id]),
     ]);
     return { items: result.rows.slice(0, size).map(row => ({ id: row.id, postId: row.post_id, kind: row.kind,
       actorName: row.display_name, postTitle: row.title, read: !!row.read_at, createdAt: iso(row.created_at) })), unread: unread.rows[0].n, page, hasNext: result.rows.length > size };
@@ -273,7 +274,7 @@ export class CommunityStore extends FoundationStore {
     return (await this.db.query("SELECT tag,count(*)::integer AS count FROM community.posts p CROSS JOIN unnest(p.tags) AS tag WHERE p.status='ACTIVE' GROUP BY tag ORDER BY count(*) DESC,tag LIMIT 20")).rows;
   }
   async mediaFor(actor, id) {
-    const row = (await this.db.query("SELECT m.* FROM community.media_assets m WHERE m.id=$1 AND (m.owner_id=$2 OR EXISTS(SELECT 1 FROM community.post_images i JOIN community.posts p ON p.id=i.post_id AND p.status='ACTIVE' WHERE i.asset_id=m.id))", [id, actor.id])).rows[0];
+    const row = (await this.db.query(`SELECT m.* FROM community.media_assets m WHERE m.id=$1 AND (m.owner_id=$2 OR EXISTS(SELECT 1 FROM community.post_images i JOIN community.posts p ON p.id=i.post_id AND p.status='ACTIVE' WHERE i.asset_id=m.id${this.postVisibility('p')}))`, [id, actor.id])).rows[0];
     if (!row) throw new Failure(404, 'MEDIA_UNAVAILABLE', '图片不存在或不可访问。');
     return row;
   }

@@ -14,7 +14,7 @@ ArtLIVE 的核心业务 API。该服务负责身份认证、用户资料、官�
 | AI 导览 | 缓存读取、按需生成与配额保护 | 默认关闭 |
 | 私有工作流 | 工作流定义、验证与用户级 CRUD | 默认关闭 |
 | Creation 执行 | 有界队列、租约、恢复与提供商适配 | 默认关闭 |
-| 社区服务 | 交流、私有图片、结构化点评与作品成长；独立 Node/PostgreSQL 服务 | 按显式迁移与配置开放，本轮增量未部署 |
+| 社区服务 | 原版帖子/房间、墨币与 AI，保留 UUID 与成长数据；独立 Node/PostgreSQL 服务 | 按显式迁移与配置开放，本轮增量未部署 |
 | 兼容接口 | 旧版上传、描述与音乐生成 API | 保留 |
 
 ## 技术栈
@@ -83,6 +83,7 @@ mvn spring-boot:run
 | `POST` | `/api/auth/register` | 注册 |
 | `POST` | `/api/auth/login` | 登录并获取 token |
 | `GET` | `/api/user/profile` | 获取当前用户资料 |
+| `GET` | `/api/user/community-identity` | Community 使用的平台身份与实际权限 |
 | `GET` | `/api/user/logs` | 获取当前用户生成记录 |
 | `GET` | `/api/health` | 健康检查 |
 
@@ -119,7 +120,7 @@ API 只公开 UUID 与逻辑 URL，不返回数据库内部 ID、存储键或服
 
 完整协议与错误契约见 [工作流定义](docs/round7-workflow-definition.md)、[提供商适配器](docs/round8-provider-adapters.md) 和 [Creation 执行](docs/round9b2-creation-execution.md)。
 
-社区不包含在 Java JAR 中，沿用 Core 身份校验。其独立运行、schema 1 合同与测试见 [Community foundation](community-service/README.md)；schema 2 API、显式 002 迁移、私有媒体和成长验证见 [图文与作品成长](community-service/LEARNING.md)。
+社区不包含在 Java JAR 中，沿用 Core 身份校验。其独立运行、schema 1 合同与测试见 [Community foundation](community-service/README.md)；schema 2 API、显式 002 迁移、私有媒体和成长验证见 [图文与作品成长](community-service/LEARNING.md)。原版 2.0 的身份接口、显式 003 迁移、兼容投影、房间/墨币/AI 和测试边界见 [PostgreSQL 移植参考](community-service/docs/reference-v2.md)。
 
 ## 配置
 
