@@ -1,8 +1,15 @@
 # ArtLIVE community foundation
 
-Status: integration and publication candidate; not an installed production
-service. Core JWT validation now checks current account status before accepting
-an existing token. Core migrations, VMM and existing data remain unchanged.
+The current additive image/growth upgrade is documented in [LEARNING.md](LEARNING.md).
+The foundation contract below describes schema 1; schema 2 capabilities are
+enabled only after explicit migration and managed media configuration.
+
+The original foundation review was an integration/publication candidate. Its
+historical installation status is not the current production contract; inspect
+the managed release/proof chain instead. This image/growth upgrade has not been
+deployed by this change. Core JWT validation checks current account status
+before accepting an existing token; Java migrations, VMM and existing data are
+unchanged by the image/growth upgrade.
 
 The community-service directory is a separate Node process beside Core,
 with an existing repository for contract review. It is not inside the JAR.
@@ -31,13 +38,14 @@ administrators, users, coins, posts or generated engagement.
 - GET does not create accounts, wallets, rewards or settlements.
 - No static /uploads mount. A reserved media primitive authorizes first and
   emits exactly one 200/206/416 response; its tests use real local HTTP.
-- Capabilities disable uploads, rooms, voice, coins and AI.
+- Foundation capabilities disable uploads. Schema 2 can enable uploads and
+  growth; rooms, voice, coins and model calls remain disabled.
 
 Input archive SHA-256:
 b5c3dda47c7cda3c74b25360babb49a8bec46071c12baaea19e36a6ab2627ecf
 
-Room, quoted-post, tags, notifications, moderation, multimedia and wallet
-logic remain tracked for subsequent phases, not silently declared migrated.
+Rooms, quoted posts, moderation and wallets remain subsequent work. Tags,
+notifications, static image uploads and artwork growth are described in LEARNING.md.
 
 ## API contract
 
@@ -151,8 +159,11 @@ runtime executable/version must be bound separately. This workflow is separate
 from the existing Core JAR publisher and cannot install the new service.
 
 Core JAR publication cannot install this Node process. Web deployment must
-preserve its new server-only setting. The matching Deploy proposal describes
-the missing service/configuration/migration/supervision binding.
+preserve its server-only setting. The matching Deploy contracts bind service,
+configuration, migration and supervision. For schema 2, see Deploy
+`docs/community-learning-upgrade.md`: private media configuration and explicit
+002 migration still require a separately reviewed finite successor for the
+current installed chain.
 
 Before production: actual Core login expiry/restrictions, native PostgreSQL
 concurrency and role privileges, source revocation, process restart recovery,

@@ -3,6 +3,7 @@ package com.auralink.controller;
 import com.auralink.dto.ApiResponse;
 import com.auralink.dto.response.GenerationLogResponse;
 import com.auralink.dto.response.UserProfileResponse;
+import java.util.List;
 import com.auralink.entity.GenerationLog;
 import com.auralink.entity.User;
 import com.auralink.repository.GenerationLogRepository;
@@ -48,6 +49,15 @@ public class UserController {
    public ResponseEntity<ApiResponse<UserProfileResponse>> getProfile(Authentication authentication) {
       User user = (User)authentication.getPrincipal();
       return ResponseEntity.ok(ApiResponse.success(UserProfileResponse.from(user)));
+   }
+
+   public record CommunityIdentity(Long id, String username, String fullName, String email, List<String> authorities) {}
+
+   @GetMapping("/community-identity")
+   public ResponseEntity<ApiResponse<CommunityIdentity>> communityIdentity(Authentication authentication) {
+      User user = (User) authentication.getPrincipal();
+      return ResponseEntity.ok(ApiResponse.success(new CommunityIdentity(user.getId(), user.getUsername(),
+         user.getFullName(), user.getEmail(), authentication.getAuthorities().stream().map(a -> a.getAuthority()).toList())));
    }
 
    public UserController(final GenerationLogRepository generationLogRepository) {

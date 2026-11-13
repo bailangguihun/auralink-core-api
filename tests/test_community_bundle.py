@@ -51,3 +51,15 @@ class CommunityBundleTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'release branch'):self.build()
         self.provenance['ref']='refs/heads/release'
         with self.assertRaisesRegex(ValueError,'Node minimum'):bundle.materialize(self.root,self.provenance,'v22.1.0')
+
+    def test_npm_omitted_optional_transitive_package_and_cli_shims_are_not_shipped(self):
+        path = self.root/'package-lock.json'
+        lock = json.loads(path.read_text())
+        lock['packages']['node_modules/optional-runtime'] = dict(version='1.0.0', optional=True,
+            integrity='sha512-fixture', resolved='https://registry.npmjs.org/optional-runtime/-/optional-runtime-1.0.0.tgz')
+        path.write_text(json.dumps(lock))
+        shims = self.root/'node_modules/.bin'
+        shims.mkdir()
+        (shims/'fixture').symlink_to('../fixture/package.json')
+        raw, _ = self.build()
+        self.assertFalse(any('/.bin/' in name for name in zipfile.ZipFile(io.BytesIO(raw)).namelist()))

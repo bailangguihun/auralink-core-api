@@ -53,6 +53,25 @@ class CommunityIdentityBoundaryTest {
       assertEquals("community-fixture", response.getData().username());
    }
    @ParameterizedTest
+   @ValueSource(strings = {"ROLE_USER", "ROLE_ADMIN"})
+   void communityIdentityUsesCurrentAccountAuthorities(String currentRole) throws Exception {
+      var current = user();
+      current.setUsername("admin");
+      current.setRole(currentRole.equals("ROLE_ADMIN") ? "ROLE_USER" : "ROLE_ADMIN");
+      String issuedBeforeRoleChange = tokens.generateToken(current);
+      current.setRole(currentRole);
+      authenticate(issuedBeforeRoleChange, current);
+      var auth = SecurityContextHolder.getContext().getAuthentication();
+      assertNotNull(auth);
+      var response = new UserController(mock(GenerationLogRepository.class)).communityIdentity(auth).getBody();
+      assertNotNull(response); assertTrue(response.isSuccess());
+      assertEquals(101L, response.getData().id());
+      assertEquals("admin", response.getData().username());
+      assertEquals("隔离用户", response.getData().fullName());
+      assertEquals("fixture@example.invalid", response.getData().email());
+      assertEquals(java.util.List.of(currentRole), response.getData().authorities());
+   }
+   @ParameterizedTest
    @ValueSource(strings = {"disabled", "locked", "account-expired", "credentials-expired"})
    void previouslyIssuedTokenCannotReauthorizeRestrictedAccount(String restriction) throws Exception {
       var current = user();

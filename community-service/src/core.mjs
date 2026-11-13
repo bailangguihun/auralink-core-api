@@ -72,6 +72,13 @@ export class CoreClient {
     }
     return { id: String(user.id), displayName: (user.fullName || user.username).slice(0, 160) };
   }
+  async communityIdentity(token) {
+    const result=await this.read('/api/user/community-identity',token), user=result?.data;
+    if(result?.success!==true||!Number.isSafeInteger(user?.id)||user.id<=0||typeof user.username!=='string'||!user.username||!Array.isArray(user.authorities)||user.authorities.some(value=>typeof value!=='string')) {
+      throw new Failure(502,'CORE_CONTRACT_INVALID','平台社区身份返回格式不完整。');
+    }
+    return {id:user.id,username:user.username,displayName:(user.fullName||user.username).slice(0,160),email:user.email||null,admin:user.authorities.includes('ROLE_ADMIN')};
+  }
   async painting(id, token) {
     const value = await this.read('/api/v1/paintings/' + uuid(id), token);
     if (value?.paintingId !== id || value.status !== 'ACTIVE' ||

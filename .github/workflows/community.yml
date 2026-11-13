@@ -42,6 +42,38 @@ jobs:
           COMMUNITY_TEST_DATABASE_URL: postgres://community_fixture:disposable_fixture_only@127.0.0.1:5432/community_fixture
         run: npm run test:postgres
 
+  community-learning:
+    name: Validate community growth on PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: community_fixture
+          POSTGRES_PASSWORD: disposable_fixture_only
+          POSTGRES_DB: community_growth_fixture
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U community_fixture -d community_growth_fixture"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: community-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: community-service/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Concurrent revisions, task deduplication and restart persistence
+        env:
+          COMMUNITY_TEST_DATABASE_URL: postgres://community_fixture:disposable_fixture_only@127.0.0.1:5432/community_growth_fixture
+        run: npm run test:learning-postgres
+
   core-interoperation:
     name: Actual Core and Community interoperability
     runs-on: ubuntu-24.04

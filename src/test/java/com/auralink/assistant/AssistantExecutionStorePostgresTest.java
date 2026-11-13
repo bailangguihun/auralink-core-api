@@ -109,6 +109,31 @@ class AssistantExecutionStorePostgresTest {
   assertEquals(3,jdbc.queryForObject("SELECT count(*) FROM assistant_runs",Integer.class));assertEquals(3,jdbc.queryForObject("SELECT count(*) FROM assistant_messages",Integer.class));
  }
  @Test void retrievalIntentAlsoBecomesUncertainWithoutAutomaticReplay(){var s=session(1);store.retrieval(1,command(s,"uncertain-rag","reference"));var r=claim(s);store.markIntent(1,r.id(),r.fence(),"worker-1","RETRIEVAL");clock.value=clock.value.plusSeconds(11);store.recoverExpired(10);var finalRun=store.get(1,r.id());assertTrue(finalRun.executionUncertain());assertEquals("DISPATCH_RESULT_UNCERTAIN",finalRun.lastError());assertTrue(store.pendingSessions(10).isEmpty());}
+ @Test void illustratedReplyKeepsItsInputAndAttachmentOrder() {
+  var s = session(1);
+  var first = UUID.fromString("00000000-0000-4000-8000-000000000002");
+  var second = UUID.fromString("00000000-0000-4000-8000-000000000001");
+  for (var image : List.of(second, first)) {
+   base.reserveAttachment(1, s.id(), "illustration-" + image, "a".repeat(64), image,
+       image.toString(), "fixture.png", "image/png", 8, "b".repeat(64), 1, 1);
+   base.readyAttachment(1, image, 1, 1);
+  }
+  var ordered = List.of(first, second);
+  var run = store.admit(1, new Admission(s.id(), s.activeBranchId(), 0, "illustrated-reply",
+      "分析意象", ordered, "mock-vision", Map.of())).run();
+  var input = store.context(1, run.id(), 32).get(0);
+  assertEquals(run.inputMessageId(), input.id());
+  assertEquals(ordered, input.attachmentIds());
+
+  var answer = "### 古树\n![古树](assistant-crop:2,bbox_2d,100,200,600,700)\n枝干向上伸展。";
+  finish(claim(s), "COMPLETED", answer);
+  var history = base.history(1, s.id(), null, false, 100);
+  assertEquals(2, history.size());
+  assertEquals(ordered, history.get(0).attachmentIds());
+  assertEquals(input.id(), history.get(1).parentMessageId());
+  assertEquals(answer, history.get(1).body());
+ }
+
  @Test void editedImageReplayUsesImmutableForkAfterHeadMovesAndDeletion(){
   var s=session(1);UUID image=UUID.randomUUID();base.reserveAttachment(1,s.id(),"edited-image-upload","a".repeat(64),image,image.toString(),"fixture.png","image/png",8,"b".repeat(64),1,1);base.readyAttachment(1,image,1,1);
   var first=store.admit(1,new Admission(s.id(),s.activeBranchId(),0,"edited-image-first","original",List.of(image),"mock-vision",Map.of())).run();var running=claim(s);finish(running,"COMPLETED","original answer");var branch=base.branches(1,s.id()).get(0);var revised=base.reviseMessage(1,s.id(),branch.id(),first.inputMessageId(),branch.version(),"edited-image-revise","revised image question");
