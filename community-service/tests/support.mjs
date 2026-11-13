@@ -1,7 +1,10 @@
 import http from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { CoreClient } from '../src/core.mjs';
-import { CommunityStore } from '../src/store.mjs';
+import { CommunityStore } from '../src/learning-store.mjs';
+import { CommunityMedia } from '../src/learning-media.mjs';
 import { createCommunityServer } from '../src/server.mjs';
 
 export const paintingId = '23c2e7c7-3898-5ecd-9ca0-dc47fc7b2d39';
@@ -19,13 +22,14 @@ export async function close(server) {
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
 }
-export async function fixture({ native = false, directory, corePort = 0 } = {}) {
+export async function fixture({ native = false, directory, corePort = 0, learning = false } = {}) {
   let database, pg;
   if (native) {
     if (!process.env.COMMUNITY_TEST_DATABASE_URL) throw new Error('A dedicated disposable PostgreSQL database URL is required');
     const target = new URL(process.env.COMMUNITY_TEST_DATABASE_URL);
+    const expectedDatabase = learning ? '/community_growth_fixture' : '/community_fixture';
     if (!['postgres:', 'postgresql:'].includes(target.protocol) || target.hostname !== '127.0.0.1' ||
-        target.pathname !== '/community_fixture') throw new Error('Native tests require loopback /community_fixture');
+        target.pathname !== expectedDatabase) throw new Error('Native tests require loopback ' + expectedDatabase);
     const { postgresDatabase } = await import('../src/database.mjs');
     database = postgresDatabase(process.env.COMMUNITY_TEST_DATABASE_URL);
   } else {
@@ -37,6 +41,10 @@ export async function fixture({ native = false, directory, corePort = 0 } = {}) 
   // A pre-existing schema rejects the fixture. Never DROP or overwrite a database.
   if (pg) await pg.exec(migration);
   else await database.query(migration);
+  if (learning) {
+    const upgrade = await readFile(new URL('../db/002_learning_community.sql', import.meta.url), 'utf8');
+    if (pg) await pg.exec(upgrade); else await database.query(upgrade);
+  }
   const state = { available: true, sourceReads: 0, profileReads: 0, coreFail: false, writes: 0, image: paintingImage };
   const coreServer = http.createServer((req, res) => {
     res.setHeader('content-type', 'application/json');
@@ -74,8 +82,11 @@ export async function fixture({ native = false, directory, corePort = 0 } = {}) 
   });
   const coreUrl = await listen(coreServer, corePort);
   const store = new CommunityStore(database);
+  await store.ready();
+  const mediaRoot = learning ? await mkdtemp(join(tmpdir(), 'artlive-community-media-')) : null;
+  const media = mediaRoot ? new CommunityMedia(mediaRoot, store) : null;
   const logs = [];
-  const server = createCommunityServer({ store, core: new CoreClient(coreUrl), allowedOrigin: 'http://127.0.0.1:3177',
+  const server = createCommunityServer({ store, media, core: new CoreClient(coreUrl), allowedOrigin: 'http://127.0.0.1:3177',
     logger: { error: value => logs.push(value) } });
   const origin = await listen(server);
   async function request(path, { token = 'FIXTURE_A', method = 'GET', payload, headers = {} } = {}) {
@@ -87,5 +98,5 @@ export async function fixture({ native = false, directory, corePort = 0 } = {}) 
     return { status: response.status, headers: response.headers, data: await response.json() };
   }
   return { database, store, state, logs, origin, coreUrl, request,
-    async close() { await close(server); await close(coreServer); await database.close(); } };
+    async close() { await close(server); await close(coreServer); await database.close(); if (mediaRoot) await rm(mediaRoot, { recursive: true }); } };
 }

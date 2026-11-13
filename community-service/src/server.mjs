@@ -1,6 +1,8 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { Failure, content, invalid, strictObject, uuid } from './errors.mjs';
+import { commentCommand, learningQuery, postCommand } from './learning-contract.mjs';
+import { learningRoute } from './learning-routes.mjs';
 
 const PREFIX = '/api/v1/community';
 function reply(res, status, value) {
@@ -27,30 +29,35 @@ function pageQuery(url, allowed = ['page', 'size']) {
   if (!Number.isSafeInteger(page) || page < 0 || page > 10000 || !Number.isInteger(size) || size < 1 || size > 24) throw invalid();
   return { page, size };
 }
-export function createCommunityServer({ store, core, allowedOrigin, logger = console }) {
+export function createCommunityServer({ store, core, allowedOrigin, media = null, reference = null, logger = console }) {
   let active = 0, draining = false;
   const idleWaiters = new Set();
-  const server = http.createServer({ requestTimeout: 15000, headersTimeout: 10000, maxHeaderSize: 16384 }, async (req, res) => {
+  const server = http.createServer({ requestTimeout: reference ? 180000 : 15000, headersTimeout: 10000, maxHeaderSize: 16384 }, async (req, res) => {
     if (draining) return reply(res, 503, { code: 'COMMUNITY_DRAINING', message: '社区维护中，请稍后再来。' });
     active++;
     const correlationId = randomUUID();
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
+      if(reference && await reference.handle(req,res))return;
       if (url.pathname === '/health' && req.method === 'GET') {
         if (!await store.ready()) throw new Error('schema mismatch');
         return reply(res, 200, { status: 'UP', contractVersion: 1 });
       }
-      if (!url.pathname.startsWith(PREFIX + '/')) throw new Failure(404, 'NOT_FOUND', '接口不存在。');
+      const currentUrl = new URL(req.url, 'http://127.0.0.1');
+      if (!currentUrl.pathname.startsWith(PREFIX + '/')) throw new Failure(404, 'NOT_FOUND', '接口不存在。');
       if (req.headers.origin && req.headers.origin !== allowedOrigin) throw new Failure(403, 'ORIGIN_REJECTED', '来源不允许。');
       const auth = req.headers.authorization;
       if (typeof auth !== 'string' || !/^Bearer [^\s,]{1,8192}$/.test(auth)) throw new Failure(401, 'UNAUTHORIZED', '请先登录。');
       const token = auth.slice(7);
       const actor = await core.authenticate(token);
-      const path = url.pathname.slice(PREFIX.length);
+      if(reference)await reference.authorizeLegacy(actor,token);
+      const path = currentUrl.pathname.slice(PREFIX.length);
       if (req.method === 'GET' && path === '/capabilities') return reply(res, 200, {
         contractVersion: 1, actor, posts: true, galleryReferences: true,
-        uploads: false, rooms: false, voice: false, coins: false, ai: false,
+        uploads: Boolean(store.learning && media), growth: Boolean(store.learning), search: Boolean(store.learning),
+        notifications: Boolean(store.learning), cases: Boolean(store.learning), rooms: Boolean(reference), voice: Boolean(reference), coins: Boolean(reference), ai: false, aiCritique: Boolean(reference),
       });
+      if (await learningRoute({ req, res, path, url, actor, store, media, body, pageQuery, reply })) return;
       const operationMatch = path.match(/^\/operations\/([^/]+)$/);
       if (req.method === 'GET' && operationMatch) return reply(res, 200, await store.outcome(actor, uuid(operationMatch[1])));
       const sourceMatch = path.match(/^\/gallery-references\/([^/]+)$/);
@@ -58,10 +65,10 @@ export function createCommunityServer({ store, core, allowedOrigin, logger = con
       const postMatch = path.match(/^\/posts\/([^/]+)(?:\/(comments|like|favorite))?$/);
       if (postMatch) uuid(postMatch[1]);
       if (req.method === 'GET' && (path === '/posts' || (postMatch && !postMatch[2]))) {
-        const { page, size } = pageQuery(url, ['page', 'size', 'view']);
+        const { page, size } = pageQuery(url, store.learning ? ['page', 'size', 'view', 'q', 'tag', 'kind', 'workflow', 'sort'] : ['page', 'size', 'view']);
         const view = url.searchParams.get('view') || 'all';
         if (!['all', 'mine', 'favorites'].includes(view)) throw invalid();
-        const result = await store.posts(actor, page, size, view, postMatch?.[1] || null);
+        const result = await store.posts(actor, page, size, view, postMatch?.[1] || null, store.learning ? learningQuery(url) : {});
         if (postMatch && !result.rows.length) throw new Failure(404, 'POST_NOT_FOUND', '帖子不存在或已删除。');
         // Deduplicate gallery checks within a response; no cross-user metadata cache.
         const references = new Map();
@@ -73,6 +80,7 @@ export function createCommunityServer({ store, core, allowedOrigin, logger = con
           author: { id: String(row.author_id), displayName: row.display_name },
           createdAt: new Date(row.created_at).toISOString(), commentCount: row.comment_count, likeCount: row.like_count,
           liked: row.liked, favorited: row.favorited, galleryReference: row.gallery_artwork_id ? await references.get(row.gallery_artwork_id) : null,
+          ...(store.presentPost ? store.presentPost(row, actor) : {}),
         })));
         return reply(res, 200, postMatch ? items[0] : { items, page, hasNext: result.hasNext });
       }
@@ -81,14 +89,15 @@ export function createCommunityServer({ store, core, allowedOrigin, logger = con
         return reply(res, 200, await store.comments(postMatch[1], page, size));
       }
       if (req.method === 'POST' && path === '/posts') {
-        const value = strictObject(await body(req), ['requestId', 'content', 'galleryArtworkId']);
-        const command = { content: content(value.content, 5000), galleryArtworkId: value.galleryArtworkId == null ? null : uuid(value.galleryArtworkId) };
+        const value = await body(req);
+        const command = postCommand(value, store.learning);
         const result = await store.createPost(actor, uuid(value.requestId), command, id => core.painting(id, token));
         return reply(res, 200, { state: 'COMMITTED', result });
       }
       if (req.method === 'POST' && postMatch?.[2] === 'comments') {
-        const value = strictObject(await body(req), ['requestId', 'content']);
-        return reply(res, 200, { state: 'COMMITTED', result: await store.comment(actor, uuid(value.requestId), postMatch[1], content(value.content, 1000)) });
+        const value = await body(req);
+        const command = commentCommand(value, store.learning);
+        return reply(res, 200, { state: 'COMMITTED', result: await store.comment(actor, uuid(value.requestId), postMatch[1], store.learning ? command : command.content) });
       }
       if (req.method === 'PUT' && ['like', 'favorite'].includes(postMatch?.[2])) {
         const value = strictObject(await body(req), ['requestId', 'enabled']);
@@ -116,6 +125,7 @@ export function createCommunityServer({ store, core, allowedOrigin, logger = con
       if (active === 0) { for (const resolve of idleWaiters) resolve(); idleWaiters.clear(); }
     }
   });
+  reference?.attach(server);
   // HTTP disconnect is not cancellation of a database transaction. Keep tracking
   // the handler until it finishes, even if server.close has no sockets left.
   let closing;
@@ -124,7 +134,7 @@ export function createCommunityServer({ store, core, allowedOrigin, logger = con
     draining = true;
     const idle = active === 0 ? Promise.resolve() : new Promise(resolve => idleWaiters.add(resolve));
     const sockets = new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    closing = Promise.all([idle, sockets]);
+    closing = Promise.all([idle, sockets, reference?.close()]);
     return closing;
   };
   return server;
