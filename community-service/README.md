@@ -1,5 +1,24 @@
 # ArtLIVE community foundation
 
+## Room recovery and voice relay
+
+Room sockets use protocol ping/pong, and shared views retain a disconnected
+presenter's session for 60 seconds. Temporary Core identity failures close the
+socket with retryable code 1013; confirmed invalid credentials retain code 4401.
+The client retries snapshot/ticket reads without repeating room membership or
+payment commands. A temporarily retained microphone stream is disabled until a
+fresh subscription and permission check; explicit mute, leave, logout and access
+revocation cancel recovery. Recovery expires after 60 seconds.
+
+Authenticated `GET /api/v2/community/api/rtc-config` supplies ICE configuration.
+Without relay configuration it reports `relayAvailable=false` and retains STUN
+direct connections. Optional server settings `COMMUNITY_TURN_URLS` (a JSON array
+of `turn:` / `turns:` URLs) and `COMMUNITY_TURN_SECRET` (at least 32 characters)
+enable ten-minute, user-specific Coturn REST credentials. The shared secret is
+never sent to the browser. Keep both settings in the private launch environment;
+managed production configuration still needs its matching reviewed contract.
+This code change does not provision a TURN server or change production settings.
+
 The current additive image/growth upgrade is documented in [LEARNING.md](LEARNING.md).
 The foundation contract below describes schema 1; schema 2 capabilities are
 enabled only after explicit migration and managed media configuration.

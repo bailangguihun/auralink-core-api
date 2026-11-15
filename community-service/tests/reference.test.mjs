@@ -182,10 +182,24 @@ test('reference 2.0: canonical posts, rich media, wallet, room ACL, live drawing
   await ok(101,`/api/v2/rooms/${room.id}/share/start`,{method:'POST',body:{}});
   owner.send(JSON.stringify({type:'share.viewport',viewport:{scale:2,panX:.1,panY:.1}}));
   assert.equal((await event(member,'share.viewport')).data.scale,2);
+  const viewport={scale:2,panX:.1,panY:.1,centerX:.25,centerY:.75};
+  owner.send(JSON.stringify({type:'share.viewport',viewport:{...viewport,centerX:100}}));
+  owner.send(JSON.stringify({type:'share.viewport',viewport}));
+  assert.deepEqual((await event(member,'share.viewport')).data,viewport);
+  const stroke={brush:'liner',color:'#b44b3e',width:8,widthRatio:.01,opacity:.8,points:[{x:.1,y:.1,p:.5},{x:.5,y:.5,p:.5}]};
+  owner.send(JSON.stringify({type:'share.stroke.complete',stroke}));
+  assert.equal((await event(member,'share.stroke.complete')).data.stroke.widthRatio,.01);
+  owner.send(JSON.stringify({type:'share.stroke.complete',stroke:{...stroke,widthRatio:-1}}));
+  await event(owner,'share.stroke.rejected');
   owner.send(JSON.stringify({type:'voice.join'}));await event(owner,'voice.roster');
   owner.send(JSON.stringify({type:'voice.start'}));assert.equal((await event(owner,'voice.updated')).data.speaking,true);
   await ok(101,`/api/v2/rooms/${room.id}/members/202/role`,{method:'PATCH',body:{role:'visitor'}});
   member.send(JSON.stringify({type:'voice.join'}));await event(member,'voice.roster');member.send(JSON.stringify({type:'voice.start'}));await event(member,'voice.error');
+  const ownerLeft=new Promise(resolve=>owner.once('close',resolve));owner.close();await ownerLeft;
+  // The previous ten-second timeout ended otherwise valid shared sessions.
+  await new Promise(resolve=>setTimeout(resolve,12000));
+  assert((await ok(101,`/api/v2/rooms/${room.id}/share`)).active);
+  await socket(101);
   await ok(101,`/api/v2/rooms/${room.id}/share/stop`,{method:'POST',body:{}});
   const closed=new Promise(resolve=>member.once('close',resolve));
   await ok(404,'/api/admin/users/202/status',{method:'PATCH',body:{status:1}});await closed;
