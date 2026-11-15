@@ -25,6 +25,7 @@ export async function createRoomFeature({
   const socketsByRoom = new Map();
   const connections = new Set();
   const shareDisconnectTimers = new Map();
+  let stopHeartbeat=()=>{};
   const shareAnnotationPreviews = new Map();
   const voiceByRoom = new Map();
   const VOICE_SPEAKER_LIMIT = 6;
@@ -465,6 +466,7 @@ export async function createRoomFeature({
     for (const stroke of strokes) {
       if (!stroke || !BRUSHES.has(stroke.brush) || stroke.tipMode !== undefined && !TIP_MODES.has(stroke.tipMode) || !/^#[0-9a-fA-F]{6}$/.test(String(stroke.color || ''))) return false;
       if (!validNumber(stroke.width) || Number(stroke.width) < 1 || Number(stroke.width) > 40) return false;
+      if (stroke.widthRatio!==undefined&&(!validNumber(stroke.widthRatio)||Number(stroke.widthRatio)<=0||Number(stroke.widthRatio)>1)) return false;
       if (!validNumber(stroke.opacity) || Number(stroke.opacity) < .1 || Number(stroke.opacity) > 1) return false;
       if (!Array.isArray(stroke.points) || stroke.points.length < 2 || stroke.points.length > 300) return false;
       totalPoints += stroke.points.length;
@@ -1521,19 +1523,23 @@ export async function createRoomFeature({
       path: '/ws',
       maxPayload: 100000
     });
+    stopHeartbeat=heartbeat(wss);
     wss.on('connection', (ws, req) => {
       connections.add(ws);
       ws.once('close', () => connections.delete(ws));
       ws.pause();
       return socketWork(async () => {
         const url = new URL(req.url, 'http://localhost');
-        const token = await consumeTicket(url.searchParams.get('ticket') || '', req.headers.origin);
-        const user = await currentUser({
-          headers: {
-            authorization: `Bearer ${token}`
-          }
-        });
+        let token,user;
+        try {
+          token = await consumeTicket(url.searchParams.get('ticket') || '', req.headers.origin);
+          user = token ? await currentUser({headers:{authorization:`Bearer ${token}`}}) : null;
+        }catch(error){
+          const code=credentialCloseCode(error);
+          ws.resume();ws.close(code,code===4401?'登录状态已失效':'平台身份暂不可确认');return;
+        }
         if (!user) {
+          ws.resume();
           ws.close(4401, '登录状态无效');
           return;
         }
@@ -1673,7 +1679,7 @@ export async function createRoomFeature({
               if (message.type === 'voice.signal') {
                 const target = voiceByRoom.get(roomId)?.get(String(message.to || '')),
                   signal = message.signal;
-                if (!target || target.ws === ws || !signal || !['offer', 'answer', 'candidate'].includes(signal.type) || !ws.voicePeer.speaking && !target.speaking) return;
+                if (!target || target.ws === ws || !signal || !['offer', 'answer', 'candidate', 'restart'].includes(signal.type) || !ws.voicePeer.speaking && !target.speaking) return;
                 if (signal.type === 'candidate' && (!signal.candidate || typeof signal.candidate !== 'object')) return;
                 if ((signal.type === 'offer' || signal.type === 'answer') && (typeof signal.sdp !== 'string' || signal.sdp.length > 80000)) return;
                 voiceEvent(target.ws, 'voice.signal', {
@@ -1693,6 +1699,7 @@ export async function createRoomFeature({
             if (message.type === 'share.viewport') {
               const viewport = message.viewport;
               if (!viewport || ![viewport.scale, viewport.panX, viewport.panY].every(Number.isFinite) || viewport.scale < .5 || viewport.scale > 5 || Math.abs(viewport.panX) > 2 || Math.abs(viewport.panY) > 2) return;
+              if ((viewport.centerX!==undefined||viewport.centerY!==undefined)&&(![viewport.centerX,viewport.centerY].every(Number.isFinite)||Math.abs(viewport.centerX)>16||Math.abs(viewport.centerY)>16)) return;
               await db.prepare('UPDATE room_view_shares SET viewport=?,updated_at=? WHERE room_id=?').run(JSON.stringify(viewport), now(), roomId);
               broadcast(roomId, 'share.viewport', viewport, user.id);
               return;
@@ -1810,6 +1817,7 @@ export async function createRoomFeature({
     return { stoppedShares, stoppedVoice, closedConnections };
   }
   async function shutdown() {
+    stopHeartbeat();
     for(const timer of shareDisconnectTimers.values())clearTimeout(timer);
     shareDisconnectTimers.clear();
     for(const share of await db.prepare("SELECT room_id,presenter_id FROM room_view_shares WHERE status='active'").all())await stopShare(share.room_id,share.presenter_id,'server_restarted');
@@ -1831,7 +1839,7 @@ export async function createRoomFeature({
           shareDisconnectTimers.delete(roomId);
           if ((await activeShare(roomId))?.presenter_id === ws.userId && !isOnline(roomId, ws.userId)) await stopShare(roomId, ws.userId, 'disconnected');
         });
-      }, 10000);
+      }, 60000);
       shareDisconnectTimers.set(roomId, timer);
     }
   }
@@ -1862,5 +1870,47 @@ export async function createRoomFeature({
     adminPaymentList,
     adminRefundPayment,
     adminCloseRoom
+  };
+}
+
+
+export function credentialCloseCode(error) {
+  return [401, 403].includes(error?.status) ? 4401 : 1013;
+}
+
+// Protocol ping/pong continues even when browser JS timers are throttled.
+export function heartbeat(server, {every=25000, timeout=60000, now=Date.now, repeat=setInterval, cancel=clearInterval}={}) {
+  const seen=new WeakMap();
+  server.on('connection',socket=>{
+    seen.set(socket,now());
+    socket.on('pong',()=>seen.set(socket,now()));
+  });
+  const timer=repeat(()=>{
+    for(const socket of server.clients){
+      if(socket.readyState!==1)continue;
+      if(now()-(seen.get(socket)??now())>=timeout){socket.terminate();continue;}
+      try{socket.ping();}catch{socket.terminate();}
+    }
+  },every);
+  timer?.unref?.();
+  let stopped=false;
+  const stop=()=>{if(!stopped){stopped=true;cancel(timer);}};
+  server.once('close',stop);
+  return stop;
+}
+
+// Coturn REST credentials are short lived; its shared secret stays server-side.
+export function rtcConfiguration({urls='',secret='',now=Date.now}={}) {
+  let turns=[];
+  if(urls){turns=JSON.parse(urls);if(!Array.isArray(turns)||!turns.length||turns.length>8||turns.some(url=>typeof url!=='string'||!/^turns?:(?:[a-z0-9.-]+|\[[a-f0-9:]+\])(?::[0-9]{1,5})?(?:\?transport=(?:udp|tcp))?$/i.test(url)))throw new Error('Invalid Community TURN URLs');}
+  if(Boolean(turns.length)!==Boolean(secret)||secret&&secret.length<32)throw new Error('Community TURN requires URLs and a shared secret of at least 32 characters');
+  return actorId=>{
+    const iceServers=[{urls:'stun:stun.l.google.com:19302'}];
+    const expiresAt=Math.floor(now()/1000)+600;
+    if(turns.length){
+      const username=expiresAt+':'+actorId;
+      iceServers.push({urls:turns,username,credential:crypto.createHmac('sha1',secret).update(username).digest('base64')});
+    }
+    return {iceServers,relayAvailable:Boolean(turns.length),expiresAt};
   };
 }

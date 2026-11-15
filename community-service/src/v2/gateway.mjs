@@ -8,6 +8,7 @@ import {referenceDatabase} from './database.mjs';
 import {createReferenceCommunity} from './posts.mjs';
 import {Failure} from '../errors.mjs';
 import {serveAuthorizedFile} from '../media.mjs';
+import {credentialCloseCode,rtcConfiguration} from './rooms.mjs';
 
 const PREFIX='/api/v2/community';
 const opaque=()=>randomBytes(32).toString('base64url');
@@ -18,7 +19,7 @@ function flush(res,record){res.writeHead(record.statusCode,{...record.headers,'c
 const failureRecord=error=>({statusCode:error.status||503,headers:{'content-type':'application/json'},chunks:[Buffer.from(JSON.stringify({code:error.status||503,message:error.status&&error.status<500?error.message:'请求结果尚未确认，请读取操作记录，不要重复提交。'}))]});
 
 /** Core remains the identity authority. Grants and socket tickets never contain a JWT. */
-export async function createReferenceGateway({database,core,mediaRoot,allowedOrigin,providerFetch}){
+export async function createReferenceGateway({database,core,mediaRoot,allowedOrigin,providerFetch,rtcConfig=rtcConfiguration(),credentialIntervalMs=15000}){
  const db=referenceDatabase(database), grants=new Map(), tickets=new Map(), credentials=new Map();
  const uploadDir=path.join(mediaRoot,'reference');fs.mkdirSync(uploadDir,{recursive:true,mode:0o700});
  const prune=map=>{for(const [key,value]of map)if(value.expires<Date.now())map.delete(key);};
@@ -42,7 +43,7 @@ export async function createReferenceGateway({database,core,mediaRoot,allowedOri
  async function consumeTicket(ticket,origin){
   prune(tickets);const value=tickets.get(ticket);tickets.delete(ticket);
   if(!value||origin!==allowedOrigin)return '';
-  try{await actorFor(value.token,true);return value.token;}catch{return '';}
+  try{await actorFor(value.token,true);return value.token;}catch(error){if([401,403].includes(error.status))return '';throw error;}
  }
  const pending=new Set();let wss;
  const socketWork=work=>{const promise=db.unit(work).catch(error=>{console.error(JSON.stringify({event:'community_socket_command_failed',code:error.code||'INTERNAL_ERROR'}));}).finally(()=>pending.delete(promise));pending.add(promise);return promise;};
@@ -94,6 +95,7 @@ export async function createReferenceGateway({database,core,mediaRoot,allowedOri
    const aiCommand=req.method==='POST'&&localPath.endsWith('/ai-critiques');
    if(aiCommand){if(activeAI>=2)return json(res,429,'当前正在处理其他 AI 请求，请稍后再试'),true;activeAI++;acquiredAI=true;}
    req.communityUser=await db.unit(()=>syncIdentity(actor));req.headers.authorization='Bearer '+token;
+   if(localPath==='/api/rtc-config'&&req.method==='GET')return json(res,200,'语音连接配置',rtcConfig(actor.id)),true;
    const cookieGrant=String(req.headers.cookie||'').split(';').map(value=>value.trim()).find(value=>value.startsWith('artlive_community_media='))?.split('=')[1];
    if(!mediaRead&&(grants.get(cookieGrant)?.token!==token||grants.get(cookieGrant)?.expires<Date.now()))mediaGrant(res,token);
    if(localPath==='/api/media-session'&&req.method==='POST'){
@@ -242,8 +244,8 @@ export async function createReferenceGateway({database,core,mediaRoot,allowedOri
   let checking=false;
   credentialTimer=setInterval(async()=>{
    if(checking)return;checking=true;
-   try{await Promise.all([...wss.clients].map(async socket=>{if(!socket.authToken)return;try{await actorFor(socket.authToken,true);const user=await db.prepare('SELECT status FROM users WHERE id=?').get(socket.userId);if(!user||user.status!==0)socket.close(4403,'账号已被禁用');}catch{socket.close(4401,'平台身份已失效');}}));}finally{checking=false;}
-  },15000);credentialTimer.unref();
+   try{await Promise.all([...wss.clients].map(async socket=>{if(!socket.authToken)return;try{await actorFor(socket.authToken,true);const user=await db.prepare('SELECT status FROM users WHERE id=?').get(socket.userId);if(!user||user.status!==0)socket.close(4403,'账号已被禁用');}catch(error){const code=credentialCloseCode(error);socket.close(code,code===4401?'平台身份已失效':'平台身份暂不可确认');}}));}finally{checking=false;}
+  },credentialIntervalMs);credentialTimer.unref();
  },async close(){
   clearInterval(credentialTimer);
   for(const socket of wss?.clients||[])socket.terminate();
