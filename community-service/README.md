@@ -1,5 +1,42 @@
 # ArtLIVE community foundation
 
+## Room recovery and voice relay
+
+This section applies to the schema 3 [Community 2.0 gateway](docs/reference-v2.md)
+and its matching Web client; the foundation contract below remains schema 1.
+
+Room sockets use protocol ping/pong, and shared views retain a disconnected
+presenter's session for 60 seconds. Temporary Core identity failures close the
+socket with retryable code 1013; confirmed invalid credentials retain code 4401.
+The client retries snapshot/ticket reads without repeating room membership or
+payment commands. A temporarily retained microphone stream is disabled until a
+fresh subscription and permission check; explicit mute, leave, logout and access
+revocation cancel recovery. Recovery expires after 60 seconds.
+The matching client checks the room/navigation and connection epochs again
+before applying a recovery snapshot, so a late older response cannot replace
+newer state. Explicit mute clears the ICE retry budget and pending retries.
+
+Authenticated `GET /api/v2/community/api/rtc-config` supplies ICE configuration.
+The Web client bounds this read to five seconds and combines request and session
+cancellation. A timeout or non-authentication failure allows voice to join using
+the existing ICE configuration or default STUN; 401/403 prevents joining.
+Without relay configuration it reports `relayAvailable=false` and retains STUN
+direct connections. Optional server settings `COMMUNITY_TURN_URLS` (a JSON array
+of `turn:` / `turns:` URLs) and `COMMUNITY_TURN_SECRET` (at least 32 characters)
+enable ten-minute, user-specific Coturn REST credentials. The shared secret is
+never sent to the browser. Keep both settings in the private launch environment;
+managed production configuration still needs its matching reviewed contract.
+This code change does not provision a TURN server or change production settings.
+
+The 2026-11-15 local checks passed 40 service tests, 267 Web unit tests, 32
+browser runtime cases and five navigation cases, plus Web lint/typecheck/build.
+Runtime browser checks use disposable HTTP, WebSocket, microphone and identity
+fixtures. TURN was not deployed by user choice; real Edge tablets, cross-network
+audio and sustained calls remain untested. Production has not been updated by
+this repair. Evidence remains outside the repositories in workspace stages
+`community-room-fixes-20261115T150559+0800` and
+`community-room-ship-20261115T153025+0800`.
+
 The current additive image/growth upgrade is documented in [LEARNING.md](LEARNING.md).
 The foundation contract below describes schema 1; schema 2 capabilities are
 enabled only after explicit migration and managed media configuration.
