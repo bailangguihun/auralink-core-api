@@ -22,5 +22,5 @@ public final class AssistantExecutionRecords {
  public record ChoiceOption(String id,String label,String text) {}
  public record ChoiceCard(String id,String title,List<ChoiceOption> options) {}
  public record Choice(UUID runId,UUID sourceMessageId,String id,String title,List<ChoiceOption> options) {}
- public record Timeline(UUID messageId,String role,String state,String body,String classification,String classificationSource,String classifierVersion,int classificationVersion,List<Run> runs,Instant createdAt) {}
+ public record Timeline(UUID messageId,String role,String state,String body,String classification,String classificationSource,String classifierVersion,int classificationVersion,List<Run> runs,Instant createdAt,String inputMode) {}
 }

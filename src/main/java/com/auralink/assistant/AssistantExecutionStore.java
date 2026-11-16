@@ -220,8 +220,13 @@ public final class AssistantExecutionStore {
  private Timeline timelineRow(UUID session,UUID selectedBranch,boolean includeHistory,AssistantRecords.Message m){
   var labels=jdbc.queryForList("SELECT version,label,source,classifier_version FROM assistant_stage_classifications WHERE message_id=? ORDER BY version DESC LIMIT 1",m.id());var label=labels.isEmpty()?Map.<String,Object>of():labels.get(0);
   List<Run> runs=jdbc.query("SELECT * FROM assistant_runs WHERE session_id=? AND (input_message_id=? OR id=?) ORDER BY created_at,id",row,session,m.id(),m.runId());
+  String inputMode=null;
+  if("USER".equals(m.role())){
+   boolean voice=runs.stream().anyMatch(run->"CHAT".equals(run.kind())&&Boolean.TRUE.equals(run.options().get("voiceInput")));
+   inputMode=m.attachmentIds().isEmpty()?(voice?"voice":"text"):(voice?"voice+image":"image");
+  }
   if(!includeHistory)runs=runs.stream().filter(run->run.branchId().equals(selectedBranch)||Objects.equals(m.role(),"ASSISTANT")&&run.id().equals(m.runId())||outputInBranch(session,selectedBranch,run.id())).toList();
-  return new Timeline(m.id(),m.role(),m.state(),m.body(),(String)label.get("label"),(String)label.get("source"),(String)label.get("classifier_version"),label.get("version") instanceof Number version?version.intValue():0,runs,m.createdAt());
+  return new Timeline(m.id(),m.role(),m.state(),m.body(),(String)label.get("label"),(String)label.get("source"),(String)label.get("classifier_version"),label.get("version") instanceof Number version?version.intValue():0,runs,m.createdAt(),inputMode);
  }
  private boolean outputInBranch(UUID session,UUID selectedBranch,UUID run){
   var selected=branch(session,selectedBranch);

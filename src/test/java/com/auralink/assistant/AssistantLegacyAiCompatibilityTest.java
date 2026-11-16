@@ -36,8 +36,8 @@ class AssistantLegacyAiCompatibilityTest {
    Map<String,Object> request=call.getArgument(1);sent.add(request);
    assertEquals(Set.of("artworks","ragflow"),((Map<?,?>)request.get("retrievalStates")).keySet());
    assertTrue(((List<?>)request.get("citations")).size()<=16);
-   BiConsumer<String,Map<String,Object>> callback=call.getArgument(2);callback.accept("done",Map.of());return null;
-  }).when(ai).execute(eq(id),anyMap(),any());
+   BiConsumer<String,Map<String,Object>> callback=call.getArgument(3);callback.accept("done",Map.of());return null;
+  }).when(ai).execute(eq(id),anyMap(),eq(false),any());
   try(var service=new AssistantExecutionService(store,foundation,mock(AssistantAttachmentService.class),ai,null,null,properties,new ObjectMapper(),Clock.systemUTC())){
    var method=AssistantExecutionService.class.getDeclaredMethod("execute",long.class,Run.class);method.setAccessible(true);method.invoke(service,1L,run);
   }

@@ -26,6 +26,10 @@ AI 的 `AURALINK_ASSISTANT_CONFIG_FILE`、
 
 ## Core HTTP API
 
+聊天请求可选带 `voiceInput:true`，记录该轮文字包含语音转写。既有请求省略此字段时保持相同的幂等载荷。时间线与 JSON 导出中的用户消息可返回 `inputMode`（`text`、`image`、`voice`、`voice+image`），旧消息按是否有关联图片显示，CSV 列保持兼容。
+
+Core 可在内部执行请求中发出 `X-Assistant-Illustration-Budget-Ms`。支持该预算的 AI 可在原有终态帧里返回补完后的 `illustratedAnswer`，受 Core 现有正文上限约束，并与终态一起保存。公有 SSE 事件和查询接口沿用既有结构，客户端通过已保存运行读取最终正文。额外视觉调用单独记在运行用量的 `illustration` 字段。
+
 所有地址位于 `/api/v1/assistant`，要求平台 Bearer 会话，私有响应 `Cache-Control:
 no-store`。基础会话/图片/导出接口沿用 S1。本轮新增：
 

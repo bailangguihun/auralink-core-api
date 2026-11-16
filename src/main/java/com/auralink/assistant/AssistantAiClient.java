@@ -54,7 +54,12 @@ public final class AssistantAiClient implements AutoCloseable {
  public Map<String,Object> models(){var value=request("GET","/models",null);requireConfig(value);return value;}
  public Map<String,Object> retrieval(String query,boolean enabled){return request("POST","/retrieval",Map.of("contractVersion",1,"configSha256",properties.getExpectedConfigSha256(),"query",query,"enabled",enabled),properties.getRetrievalTimeout().toMillis());}
  public void execute(UUID id,Map<String,Object> payload,BiConsumer<String,Map<String,Object>> consumer)throws IOException,InterruptedException{
+  execute(id,payload,false,consumer);
+ }
+ public void execute(UUID id,Map<String,Object> payload,boolean illustratePrivateAttachments,BiConsumer<String,Map<String,Object>> consumer)throws IOException,InterruptedException{
   var request=builder("POST","/executions",properties.getIdleTimeout().toMillis());
+  long illustrationMs=Math.min(8000,properties.getIdleTimeout().toMillis()-1000);
+  if(illustratePrivateAttachments&&illustrationMs>=1000)request.setHeader("X-Assistant-Illustration-Budget-Ms",Long.toString(illustrationMs));
   request.setEntity(new ByteArrayEntity(json.writeValueAsBytes(payload),ContentType.APPLICATION_JSON));
   requests.put(id,request);
   long start=System.nanoTime();
