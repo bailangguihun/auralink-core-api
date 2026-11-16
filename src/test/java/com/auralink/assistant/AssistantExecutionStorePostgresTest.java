@@ -27,6 +27,27 @@ class AssistantExecutionStorePostgresTest {
  private Run claim(AssistantRecords.Session s){return store.claim(1,s.id(),"worker-1",Duration.ofSeconds(10)).orElseThrow();}
  private Run finish(Run r,String state,String text){return store.complete(1,r.id(),r.fence(),"worker-1",state,text,List.of(),Map.of(),List.of());}
  private Run completed(AssistantRecords.Session s,String key){store.admit(1,command(s,key,"构图参考"));var r=claim(s);store.markDispatch(1,r.id(),r.fence(),"worker-1");return finish(r,"COMPLETED","answer");}
+ @Test void timelineDistinguishesDictationFromEarlierTextAndKeepsTheFinalIllustratedAnswer(){
+  var session=session(1);
+  completed(session,"earlier-text");
+  var original=command(session,"voice-input","画面构图");
+  var options=new LinkedHashMap<>(original.options());
+  options.put("voiceInput",true);
+  var voice=new Admission(original.sessionId(),original.branchId(),original.expectedVersion(),
+      original.requestKey(),original.text(),original.attachmentIds(),original.modelId(),options);
+  var accepted=store.admit(1,voice);
+  assertEquals(accepted.run().id(),store.admit(1,voice).run().id());
+  fail(409,()->store.admit(1,original));
+  var run=claim(session);
+  store.checkpoint(1,run.id(),run.fence(),"worker-1",run.sequence(),"### 山峰\n讲解",Map.of("text","### 山峰\n讲解"));
+  String illustrated="### 山峰\n![山峰](assistant-crop:1,bbox_2d,100,200,500,700)\n讲解";
+  var usage=Map.<String,Object>of("illustration",Map.of("status","COMPLETED","providerReported",Map.of("total_tokens",42)));
+  store.complete(1,run.id(),run.fence(),"worker-1","COMPLETED",illustrated,List.of(),usage,List.of());
+  var timeline=store.timeline(1,session.id());
+  assertEquals(List.of("text","voice"),timeline.stream().filter(row->row.role().equals("USER")).map(Timeline::inputMode).toList());
+  assertEquals(illustrated,timeline.stream().filter(row->row.role().equals("ASSISTANT")&&row.body().equals(illustrated)).findFirst().orElseThrow().body());
+  assertEquals(usage,store.get(1,run.id()).usage());
+ }
  @Test void optionalWebCompatibilityReadsTheActualConstraintWithoutChangingIt(){
   String before=jdbc.queryForObject("SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='assistant_citations'::regclass AND conname='assistant_citations_source_type_check'",String.class);
   assertFalse(store.supportsWebCitations());

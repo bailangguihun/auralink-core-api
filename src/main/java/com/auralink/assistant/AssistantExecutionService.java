@@ -42,7 +42,11 @@ public final class AssistantExecutionService implements AutoCloseable {
   return ((List<Map<String,Object>>)value.getOrDefault("models",List.of())).stream().filter(m->id.equals(m.get("id"))&&Boolean.TRUE.equals(m.get("enabled"))&&Boolean.TRUE.equals(m.get("configured"))).findFirst().orElseThrow(()->new AssistantFailure(422,"ASSISTANT_MODEL_UNAVAILABLE","Selected model is unavailable; choose explicitly"));
  }
  public record ArtworkRef(UUID artworkId,UUID expectedBatchId,int expectedRevision,boolean includeImage){}
- public record Command(UUID branchId,long expectedVersion,String requestKey,String text,List<UUID> attachmentIds,String modelKey,Map<String,Boolean> retrieval,List<ArtworkRef> artworkRefs){}
+ public record Command(UUID branchId,long expectedVersion,String requestKey,String text,List<UUID> attachmentIds,String modelKey,Map<String,Boolean> retrieval,List<ArtworkRef> artworkRefs,Boolean voiceInput){
+  public Command(UUID branchId,long expectedVersion,String requestKey,String text,List<UUID> attachmentIds,String modelKey,Map<String,Boolean> retrieval,List<ArtworkRef> artworkRefs){
+   this(branchId,expectedVersion,requestKey,text,attachmentIds,modelKey,retrieval,artworkRefs,null);
+  }
+ }
  private Admission command(long owner,UUID session,Command c){
   foundation.requireOwnedSessionForRequest(owner,session);
   if(c==null||c.branchId()==null||c.expectedVersion()<0||c.text()==null||c.text().length()>32000||(c.text().isBlank()&&(c.attachmentIds()==null||c.attachmentIds().isEmpty())))throw AssistantFailure.invalid("A branch, version and bounded message are required");
@@ -54,6 +58,7 @@ public final class AssistantExecutionService implements AutoCloseable {
   if(!refs.isEmpty()&&!Boolean.TRUE.equals(retrieval.get("artworks")))throw AssistantFailure.invalid("Artwork references require explicit platform retrieval");
   var retrievalOptions=new LinkedHashMap<String,Object>();retrievalOptions.put("artworks",Boolean.TRUE.equals(retrieval.get("artworks")));retrievalOptions.put("ragflow",Boolean.TRUE.equals(retrieval.get("ragflow")));retrievalOptions.put("web",Boolean.TRUE.equals(retrieval.get("web")));
   var options=new LinkedHashMap<String,Object>();options.put("configSha256",p.getExpectedConfigSha256());options.put("retrieval",retrievalOptions);options.put("artworkRefs",refs.stream().map(r->Map.of("artworkId",r.artworkId().toString(),"expectedBatchId",r.expectedBatchId().toString(),"expectedRevision",r.expectedRevision(),"includeImage",r.includeImage())).toList());options.put("promptVersion","assistant-chat-v1");
+  if(Boolean.TRUE.equals(c.voiceInput())&&!c.text().isBlank())options.put("voiceInput",true);
   return new Admission(session,c.branchId(),c.expectedVersion(),c.requestKey(),c.text(),files,c.modelKey(),options);
  }
  private void validateInput(long owner,Admission c){
@@ -149,12 +154,35 @@ public final class AssistantExecutionService implements AutoCloseable {
    preparation.check();
    run.set(store.markIntent(owner,claimed.id(),claimed.fence(),worker,"MODEL"));
    Runnable confirmSources=()->{if(!sourcesObserved.get()){run.set(store.confirmModelSources(owner,claimed.id(),claimed.fence(),worker,citations));sourcesObserved.set(true);}};
-   ai.execute(claimed.id(),request,(type,value)->{
+   // Artwork image references are appended after the private attachments. Keep
+   // optional localization on runs whose image indices resolve to private files.
+   boolean illustratePrivateAttachments="CHAT".equals(claimed.kind())
+       &&refs(claimed.options()).stream().noneMatch(ArtworkRef::includeImage)
+       &&!list(context.messages().get(context.messages().size()-1).get("images")).isEmpty();
+   ai.execute(claimed.id(),request,illustratePrivateAttachments,(type,value)->{
     switch(type){
      case "delta" -> {Object delta=value.get("text");if(!(delta instanceof String))throw protocol();confirmSources.run();String next=text.get()+delta;if(next.length()>p.getMaxOutputChars())throw new AssistantFailure(502,"ASSISTANT_OUTPUT_LIMIT","Assistant output exceeds limit");run.set(store.checkpoint(owner,claimed.id(),claimed.fence(),worker,run.get().sequence(),next,Map.of("text",delta)));text.set(next);}
-     case "usage" -> {confirmSources.run();usage.set(Map.of("available",true,"purpose",claimed.kind(),"providerReported",map(value.get("providerReported")),"verifiedBilling",false));}
+     case "usage" -> {
+      confirmSources.run();
+      if(value.get("illustration") instanceof Map<?,?>){
+       var detail=map(value.get("illustration"));
+       if(!illustratePrivateAttachments||!List.of("COMPLETED","UNCONFIRMED").contains(Objects.toString(detail.get("status"),"")))throw protocol();
+       var next=new LinkedHashMap<>(usage.get());
+       next.put("illustration",Map.of("status",detail.get("status"),"providerReported",map(detail.get("providerReported"))));
+       usage.set(Map.copyOf(next));
+      }else{
+       usage.set(Map.of("available",true,"purpose",claimed.kind(),"providerReported",map(value.get("providerReported")),"verifiedBilling",false));
+      }
+     }
      case "choices" -> choices.set(parseChoices(value));
-     case "done" -> {confirmSources.run();run.set(store.complete(owner,claimed.id(),claimed.fence(),worker,"COMPLETED",text.get(),citations,usage.get(),choices.get()));terminal.set(true);}
+     case "done" -> {
+      confirmSources.run();
+      String result=text.get();
+      if(illustratePrivateAttachments&&value.get("illustratedAnswer") instanceof String illustrated&&!illustrated.isBlank()
+          &&illustrated.length()<=p.getMaxOutputChars()&&illustrated.getBytes(StandardCharsets.UTF_8).length<=262144)result=illustrated;
+      run.set(store.complete(owner,claimed.id(),claimed.fence(),worker,"COMPLETED",result,citations,usage.get(),choices.get()));
+      terminal.set(true);
+     }
      case "error" -> throw new AssistantFailure(502,"ASSISTANT_UPSTREAM_UNCERTAIN","Assistant upstream execution did not finish reliably");
      default -> throw protocol();
     }
