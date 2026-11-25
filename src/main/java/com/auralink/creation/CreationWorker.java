@@ -429,7 +429,7 @@ public class CreationWorker {
          raw.put("title", output.title());
          raw.put("lines", output.lines());
          raw.put("text", output.text());
-         this.poemValidator.validate(this.objectMapper.writeValueAsString(raw));
+         this.poemValidator.validateGenerated(this.objectMapper.writeValueAsString(raw));
       } catch (Exception exception) {
          throw new IllegalArgumentException("Poem output is invalid", exception);
       }

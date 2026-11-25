@@ -213,7 +213,7 @@ public class CreationResultPersistenceService {
          source.put("title", output.title());
          source.put("lines", output.lines());
          source.put("text", output.text());
-         PaintingPoemResult poem = this.poemValidator.validate(this.objectMapper.writeValueAsString(source));
+         PaintingPoemResult poem = this.poemValidator.validateGenerated(this.objectMapper.writeValueAsString(source));
          LinkedHashMap<String, Object> canonical = new LinkedHashMap<>();
          canonical.put("schemaVersion", poem.schemaVersion());
          canonical.put("title", poem.title());
