@@ -31,16 +31,26 @@ export async function createReferenceCommunity({
     insertTag: db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)'),
     addPostTag: db.prepare('INSERT OR IGNORE INTO post_tags (post_id, tag_id) VALUES (?, ?)'),
     removePostTags: db.prepare('DELETE FROM post_tags WHERE post_id = ?'),
-    addPostLike: db.prepare('INSERT OR IGNORE INTO post_likes (post_id, user_id) VALUES (?, ?)'),
-    removePostLike: db.prepare('DELETE FROM post_likes WHERE post_id = ? AND user_id = ?'),
-    addFavorite: db.prepare('INSERT OR IGNORE INTO favorites (post_id, user_id) VALUES (?, ?)'),
-    removeFavorite: db.prepare('DELETE FROM favorites WHERE post_id = ? AND user_id = ?'),
     insertComment: db.prepare('INSERT INTO comments (post_id, user_id, parent_id, reply_user_id, content) VALUES (?, ?, ?, ?, ?)'),
     deleteComment: db.prepare('DELETE FROM comments WHERE id = ?'),
     addCommentLike: db.prepare('INSERT OR IGNORE INTO comment_likes (comment_id, user_id) VALUES (?, ?)'),
     removeCommentLike: db.prepare('DELETE FROM comment_likes WHERE comment_id = ? AND user_id = ?'),
 
   };
+
+  async function togglePostReaction(postId, userId, kind) {
+    const values = [postId, userId, kind];
+    // The gateway holds the write lock and transaction. Let the canonical trigger
+    // update the reference reaction and count together with the operation receipt.
+    await db.query("SET LOCAL artlive.reference_write='off'");
+    const removed = await db.query('DELETE FROM community.reactions WHERE post_id=$1 AND user_id=$2 AND kind=$3', values);
+    if (!removed.rowCount) {
+      await db.query('INSERT INTO community.reactions(post_id,user_id,kind) VALUES($1,$2,$3)', values);
+    }
+    await db.query("SET LOCAL artlive.reference_write='on'");
+    return removed.rowCount === 0;
+  }
+
   function coinId(prefix = 'coin') {
     return `${prefix}_${crypto.randomUUID()}`;
   }
@@ -1288,20 +1298,12 @@ export async function createReferenceCommunity({
           return sendJson(res, 200, 200, '帖子已删除；作品已获得的墨币不会退还');
         }
         if (req.method === 'POST' && pathParts[3] === 'like') {
-          const exists = await db.prepare('SELECT 1 FROM post_likes WHERE post_id=? AND user_id=?').get(id, me.id);
-          if (exists) {
-            await sql.removePostLike.run(id, me.id);
-            await db.prepare('UPDATE posts SET like_count=MAX(0,like_count-1) WHERE id=?').run(id);
-          } else {
-            await sql.addPostLike.run(id, me.id);
-            await db.prepare('UPDATE posts SET like_count=like_count+1 WHERE id=?').run(id);
-          }
-          return sendJson(res, 200, 200, exists ? '已取消点赞' : '点赞成功', await postView(await sql.postById.get(id), me.id));
+          const liked = await togglePostReaction(post.legacy_id, me.id, 'like');
+          return sendJson(res, 200, 200, liked ? '点赞成功' : '已取消点赞', await postView(await sql.postById.get(id), me.id));
         }
         if (req.method === 'POST' && pathParts[3] === 'favorite') {
-          const exists = await db.prepare('SELECT 1 FROM favorites WHERE post_id=? AND user_id=?').get(id, me.id);
-          if (exists) await sql.removeFavorite.run(id, me.id);else await sql.addFavorite.run(id, me.id);
-          return sendJson(res, 200, 200, exists ? '已取消收藏' : '收藏成功', await postView(await sql.postById.get(id), me.id));
+          const favorited = await togglePostReaction(post.legacy_id, me.id, 'favorite');
+          return sendJson(res, 200, 200, favorited ? '收藏成功' : '已取消收藏', await postView(await sql.postById.get(id), me.id));
         }
         if (req.method === 'POST' && pathParts[3] === 'coins') {
           const body = await readBody(req);

@@ -98,6 +98,38 @@ test('reference 2.0: canonical posts, rich media, wallet, room ACL, live drawing
   const caseSearch=await ok(303,'/api/posts?q='+encodeURIComponent(caseContent.toLowerCase()));
   assert.deepEqual(caseSearch.items.map(item=>item.id),[casePost.id]);
  });
+ await t.test('post reactions toggle for existing and new posts without changing the other reaction', async () => {
+  const existingId = randomUUID();
+  await pg.query("INSERT INTO community.posts(id,author_id,content,created_at,updated_at) VALUES($1,101,'既有作品','2025-10-27T10:41:00Z','2025-10-27T10:41:00Z')",[existingId]);
+  await pg.query("INSERT INTO community.reactions(post_id,user_id,kind) VALUES($1,202,'like'),($1,303,'like')",[existingId]);
+  const existing = await ok(202,`/api/legacy-posts/${existingId}`);
+  const fresh = await ok(101,'/api/posts',{method:'POST',body:{content:'新作品'}});
+
+  for (const [target, initialCount] of [[existing, 2], [fresh, 0]]) {
+   const path = `/api/posts/${target.id}`;
+   const command = {method:'POST',body:{}};
+   const react = kind => ok(202,`${path}/${kind}`,command);
+   if (!initialCount) assert.equal((await react('like')).likeCount,1);
+   assert.equal((await react('favorite')).favorited,true);
+   const unlikeCommand = {...command,requestId:randomUUID()};
+   const unliked = await ok(202,`${path}/like`,unlikeCommand);
+   assert.equal(unliked.liked,false);
+   assert.equal(unliked.favorited,true);
+   assert.equal(unliked.likeCount,initialCount ? 1 : 0);
+   assert.deepEqual(await ok(202,`${path}/like`,unlikeCommand),unliked);
+
+   const reliked = await react('like');
+   assert.equal(reliked.liked,true);
+   assert.equal(reliked.likeCount,initialCount || 1);
+   const unfavorited = await react('favorite');
+   assert.equal(unfavorited.favorited,false);
+   assert.equal(unfavorited.liked,true);
+   assert.equal(unfavorited.likeCount,reliked.likeCount);
+   assert.equal((await ok(202,path)).post.likeCount,reliked.likeCount);
+   const canonical = await pg.query("SELECT kind FROM community.reactions WHERE post_id=(SELECT legacy_id FROM community.v2_posts WHERE id=$1) AND user_id=202",[target.id]);
+   assert.deepEqual(canonical.rows,[{kind:'like'}]);
+  }
+ });
  await t.test('expert-only tickets, initial-gift restriction, single charge, refunds and seven-day settlement',async()=>{
   const body={name:'专家付费共赏',visibility:'public',entryPrice:1};
   assert.equal((await request(101,'/api/v2/rooms',{method:'POST',body})).status,403);
