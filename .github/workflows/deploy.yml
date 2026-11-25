@@ -35,6 +35,7 @@ jobs:
         run: |
           python3 -B -m unittest discover -s tests -p 'test_core_release_candidate.py' -v
           python3 -B -m unittest discover -s tests -p 'test_r25_publish_retry.py' -v
+          python3 -B -m unittest discover -s tests -p 'test_r25_candidate_transfer.py' -v
       - name: Test and build the exact release source
         run: mvn -B -ntp clean package
       - name: Verify full application startup with isolated native PostgreSQL
@@ -145,10 +146,7 @@ jobs:
           ssh_to_r25=(ssh "${common[@]}" -p "$SERVER_PORT" "$destination")
           python3 -B scripts/r25-publish-retry.py --commit "$GITHUB_SHA" -- "${ssh_to_r25[@]}" \
             "timeout --signal=TERM --kill-after=10 30 /root/miniconda3/bin/python3 -B $publisher prepare-incoming $identity"
-          chmod 600 candidate/auralink-backend-0.0.1-SNAPSHOT.jar candidate/r25-artifact-verification.json candidate/core-release-candidate.json
-          if ! timeout 180 scp "${common[@]}" -P "$SERVER_PORT" -p \
-            candidate/auralink-backend-0.0.1-SNAPSHOT.jar candidate/r25-artifact-verification.json candidate/core-release-candidate.json \
-            "$destination:$incoming/"; then
+          if ! bash scripts/r25-transfer-candidate.sh "$incoming" "$destination" "$SERVER_PORT" "${common[@]}"; then
             echo 'R25 status CANDIDATE_TRANSFER_FAILED' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
