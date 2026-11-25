@@ -12,6 +12,7 @@ import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 @Entity
 @Table(
@@ -83,7 +84,7 @@ public class Creation extends BasePublicIdEntity {
 
    @PrePersist
    protected void initializeTimestamps() {
-      LocalDateTime now = LocalDateTime.now();
+      LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
       if (this.createdAt == null) {
          this.createdAt = now;
       }
@@ -95,7 +96,7 @@ public class Creation extends BasePublicIdEntity {
 
    @PreUpdate
    protected void updateTimestamp() {
-      this.updatedAt = LocalDateTime.now();
+      this.updatedAt = LocalDateTime.now(ZoneOffset.UTC);
    }
 
    private static int $default$retryVersion() {
