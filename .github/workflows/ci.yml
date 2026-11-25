@@ -121,6 +121,9 @@ jobs:
       - name: Test release candidate integrity and provenance
         run: python -m unittest discover -s tests -p 'test_core_release_candidate.py'
 
+      - name: Test R25 publication lock handling
+        run: python -B -m unittest discover -s tests -p 'test_r25_publish_retry.py'
+
       - name: Test read-only Knowledge asset preflight
         run: python -B -m unittest discover -s tests -p 'test_knowledge_assets.py'
 
