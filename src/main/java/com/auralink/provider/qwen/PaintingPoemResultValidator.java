@@ -12,30 +12,41 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Component;
 
 @Component
 public class PaintingPoemResultValidator {
    private static final Set<String> FIELDS = Set.of("schemaVersion", "title", "lines", "text");
+   private static final Pattern POEM_CHARACTERS = Pattern.compile("[\\p{IsHan}\\p{P}\\p{Zs}]+");
    private static final int MAX_LINE_CHARS = 100;
    private static final long MAX_STRUCTURED_JSON_OVERHEAD_CHARS = 16384L;
    private final ObjectMapper objectMapper;
    private final CreationProviderProperties properties;
 
+   /** Keep the read contract for poems saved before strict language validation. */
    public PaintingPoemResult validate(String rawJson) {
+      return this.validate(rawJson, false);
+   }
+
+   public PaintingPoemResult validateGenerated(String rawJson) {
+      return this.validate(rawJson, true);
+   }
+
+   private PaintingPoemResult validate(String rawJson, boolean generated) {
       QwenResponseShapeDiagnostic.Builder shape = QwenResponseShapeDiagnostic.builder().contentPresent(rawJson != null);
       if (rawJson != null) {
          shape.contentType(QwenSafeValueType.STRING).contentLength(rawJson.length());
       }
 
-      return this.validate(rawJson, shape.build());
+      return this.validate(rawJson, shape.build(), generated);
    }
 
    PaintingPoemResult validate(QwenResponseContent response) {
-      return response == null ? this.validate((String)null) : this.validate(response.content(), response.responseShape());
+      return response == null ? this.validateGenerated(null) : this.validate(response.content(), response.responseShape(), true);
    }
 
-   private PaintingPoemResult validate(String rawJson, QwenResponseShapeDiagnostic baseShape) {
+   private PaintingPoemResult validate(String rawJson, QwenResponseShapeDiagnostic baseShape, boolean generated) {
       QwenResponseShapeDiagnostic.Builder shape = baseShape.toBuilder();
       if (rawJson == null) {
          throw this.invalid(QwenResponseValidationStage.CONTENT, QwenResponseValidationCode.QWEN_CONTENT_MISSING, shape);
@@ -178,7 +189,7 @@ public class PaintingPoemResultValidator {
                   throw this.invalid(QwenResponseValidationStage.POEM_SEMANTICS, QwenResponseValidationCode.QWEN_TITLE_TOO_LONG, shape);
                }
 
-               if (!ChineseTextRules.containsChinese(title)) {
+               if (!(generated ? isChinesePoemText(title) : ChineseTextRules.containsChinese(title))) {
                   throw this.invalid(QwenResponseValidationStage.POEM_SEMANTICS, QwenResponseValidationCode.QWEN_TITLE_NON_CHINESE, shape);
                }
             }
@@ -213,7 +224,9 @@ public class PaintingPoemResultValidator {
                throw this.invalid(QwenResponseValidationStage.POEM_SEMANTICS, QwenResponseValidationCode.QWEN_LINE_BLANK, shape);
             } else if (lineFacts.maximumLength() != null && lineFacts.maximumLength() > 100) {
                throw this.invalid(QwenResponseValidationStage.POEM_SEMANTICS, QwenResponseValidationCode.QWEN_LINE_TOO_LONG, shape);
-            } else if (lineFacts.chineseDominantCount() != linesNode.size()) {
+            } else if (generated
+               ? lineFacts.normalizedLines().stream().anyMatch(line -> !isChinesePoemText(line))
+               : lineFacts.chineseDominantCount() != linesNode.size()) {
                throw this.invalid(QwenResponseValidationStage.POEM_SEMANTICS, QwenResponseValidationCode.QWEN_LINE_NON_CHINESE, shape);
             } else if (lineFacts.duplicateCount() > 0) {
                throw this.invalid(QwenResponseValidationStage.POEM_SEMANTICS, QwenResponseValidationCode.QWEN_LINE_DUPLICATE, shape);
@@ -255,6 +268,11 @@ public class PaintingPoemResultValidator {
       } else {
          throw this.invalid(QwenResponseValidationStage.JSON_STRUCTURE, QwenResponseValidationCode.QWEN_JSON_ROOT_NOT_OBJECT, shape);
       }
+   }
+
+   private static boolean isChinesePoemText(String value) {
+      return POEM_CHARACTERS.matcher(value).matches()
+         && value.codePoints().anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
    }
 
    private void collectAvailableShape(JsonNode root, QwenResponseShapeDiagnostic.Builder shape) {

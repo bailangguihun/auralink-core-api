@@ -32,7 +32,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Test release candidate integrity checks
-        run: python3 -B -m unittest discover -s tests -p 'test_core_release_candidate.py' -v
+        run: |
+          python3 -B -m unittest discover -s tests -p 'test_core_release_candidate.py' -v
+          python3 -B -m unittest discover -s tests -p 'test_r25_publish_retry.py' -v
       - name: Test and build the exact release source
         run: mvn -B -ntp clean package
       - name: Verify full application startup with isolated native PostgreSQL
@@ -97,7 +99,7 @@ jobs:
     if: vars.R25_DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 15
+    timeout-minutes: 45
     concurrency:
       group: core-api-r25-production
       cancel-in-progress: false
@@ -107,12 +109,6 @@ jobs:
         with:
           name: core-api-r25-staging-${{ github.sha }}
           path: candidate
-      - name: Refuse an obsolete queued release
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          latest=$(git ls-remote --exit-code origin refs/heads/release | cut -f1)
-          test "$latest" = "$GITHUB_SHA"
       - name: Transfer candidate and run the installed R25 publisher
         shell: bash
         env:
@@ -140,15 +136,43 @@ jobs:
           if [ "$SERVER_PORT" != 22 ]; then known_host="[$SERVER_HOST]:$SERVER_PORT"; fi
           printf '%s %s\n' "$known_host" "$SERVER_HOST_KEY" > "$key_dir/known_hosts"
           unset SERVER_SSH_KEY
-          common=(-i "$key_dir/key" -o "UserKnownHostsFile=$key_dir/known_hosts" -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=15)
+          common=(-i "$key_dir/key" -o "UserKnownHostsFile=$key_dir/known_hosts" -o StrictHostKeyChecking=yes
+                  -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
           destination="$SERVER_USER@$SERVER_HOST"
           publisher=/root/autodl-tmp/artlive-r25-native-pg16/handoff-production-20260923T062101Z/operations/r25-publisher/core_publish.py
           incoming="/root/autodl-tmp/auralink-core-deploy/incoming/$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           identity="--commit $GITHUB_SHA --run-id $GITHUB_RUN_ID --run-attempt $GITHUB_RUN_ATTEMPT"
-          ssh "${common[@]}" -p "$SERVER_PORT" "$destination" "/root/miniconda3/bin/python3 -B $publisher prepare-incoming $identity"
+          ssh_to_r25=(ssh "${common[@]}" -p "$SERVER_PORT" "$destination")
+          python3 -B scripts/r25-publish-retry.py --commit "$GITHUB_SHA" -- "${ssh_to_r25[@]}" \
+            "timeout --signal=TERM --kill-after=10 30 /root/miniconda3/bin/python3 -B $publisher prepare-incoming $identity"
           chmod 600 candidate/auralink-backend-0.0.1-SNAPSHOT.jar candidate/r25-artifact-verification.json candidate/core-release-candidate.json
-          scp "${common[@]}" -P "$SERVER_PORT" -p \
+          if ! timeout 180 scp "${common[@]}" -P "$SERVER_PORT" -p \
             candidate/auralink-backend-0.0.1-SNAPSHOT.jar candidate/r25-artifact-verification.json candidate/core-release-candidate.json \
-            "$destination:$incoming/"
-          ssh "${common[@]}" -p "$SERVER_PORT" "$destination" \
-            "timeout --signal=TERM --kill-after=60 480 /root/miniconda3/bin/python3 -B $publisher publish $identity"
+            "$destination:$incoming/"; then
+            echo 'R25 status CANDIDATE_TRANSFER_FAILED' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          publication_exit=0
+          python3 -B scripts/r25-publish-retry.py --commit "$GITHUB_SHA" \
+            --manifest candidate/core-release-candidate.json -- "${ssh_to_r25[@]}" \
+            "timeout --signal=TERM --kill-after=600 1200 /root/miniconda3/bin/python3 -B $publisher publish $identity" \
+            || publication_exit=$?
+          if [ "$publication_exit" -ne 0 ]; then
+            echo 'Checking the current Core release through the read-only R25 status command.'
+            "${ssh_to_r25[@]}" \
+              "timeout --signal=TERM --kill-after=10 60 /root/miniconda3/bin/python3 -B $publisher status" || true
+            exit "$publication_exit"
+          fi
+
+      - name: Verify public Core API health
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if curl --fail --silent --show-error --connect-timeout 5 --max-time 12 \
+              --retry 2 --retry-all-errors --retry-max-time 35 https://api.artlive.top/api/health |
+              python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("status") == "UP" else 1)'; then
+            echo "Core $GITHUB_SHA verified by R25 and public health checks." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'R25 receipt verified. Public health verification failed.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
