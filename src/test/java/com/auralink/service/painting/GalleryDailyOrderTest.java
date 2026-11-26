@@ -8,16 +8,20 @@ import com.auralink.catalogauth.CatalogAuthStore;
 import com.auralink.catalogread.CatalogReadStore;
 import com.auralink.config.properties.PaintingProperties;
 import com.auralink.entity.Painting;
+import com.auralink.entity.User;
 import com.auralink.repository.PaintingFavoriteRepository;
 import com.auralink.repository.PaintingRepository;
 import com.auralink.service.CurrentUserService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -171,16 +175,33 @@ class GalleryDailyOrderTest {
       verifyNoInteractions(store);
    }
 
-   @Test void dailyRecommendationContinuesToUseSourceOrderWithoutDate() {
+   @Test void dailyRecommendationDoesNotLoadPaginatedCatalogRows() {
       var service = service("2026-10-19T12:00:00Z");
-      // Empty mocked pages deliberately produce not-found after both source queries.
       assertThrows(ApiV1Exception.class, service::getDailyPainting);
-      var capture = ArgumentCaptor.forClass(CatalogReadStore.CatalogQuery.class);
-      verify(store, times(2)).list(capture.capture());
-      for (var query : capture.getAllValues()) {
-         assertEquals("source", query.sort());
-         assertEquals("asc", query.direction());
-         assertNull(query.orderDate());
-      }
+      verify(store).findDailyPainting(LocalDate.of(2026, 10, 19));
+      verify(store, never()).list(any());
+   }
+
+   @Test void dailyRecommendationUsesConfiguredDateAndKeepsPerUserFavorite() {
+      var date = LocalDate.of(2026, 10, 20);
+      var painting = new CatalogReadStore.CatalogPainting("daily-id", "daily-key", 1, "1", null, "山水", "作者", "山水",
+         "ACTIVE", "VALID", "READY", null, Map.of("legacy.subject", "远山"), List.of());
+      when(store.findDailyPainting(date)).thenReturn(Optional.of(painting));
+      var favoriteStore = mock(CatalogAuthStore.class);
+      when(auth.getIfAvailable()).thenReturn(favoriteStore);
+      var service = service("2026-10-19T16:00:00Z");
+      var anonymous = service.getDailyPainting();
+      assertEquals("daily-id", anonymous.paintingId());
+      assertEquals("远山", anonymous.subject());
+      assertFalse(anonymous.favorited());
+      verifyNoInteractions(favoriteStore);
+
+      var user = mock(User.class);
+      when(user.getId()).thenReturn(17L);
+      when(users.findCurrentUser()).thenReturn(Optional.of(user));
+      when(favoriteStore.favoritedPaintingIds(17L, List.of("daily-id"))).thenReturn(Set.of("daily-id"));
+      assertTrue(service.getDailyPainting().favorited());
+      verify(store, times(2)).findDailyPainting(date);
+      verify(store, never()).list(any());
    }
 }

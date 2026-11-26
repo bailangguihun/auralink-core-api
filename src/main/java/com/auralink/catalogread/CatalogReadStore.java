@@ -13,6 +13,8 @@ public interface CatalogReadStore {
 
    CatalogReadStore.CatalogPage list(CatalogReadStore.CatalogQuery query);
 
+   Optional<CatalogReadStore.CatalogPainting> findDailyPainting(LocalDate date);
+
    Optional<CatalogReadStore.CatalogPainting> findPainting(String publicId);
 
    List<CatalogReadStore.CatalogPainting> findPaintings(List<String> publicIds);

@@ -9,6 +9,7 @@ import com.auralink.api.v1.painting.PaintingPageResponse;
 import com.auralink.api.v1.painting.PaintingSummaryResponse;
 import com.auralink.catalog.DynastyNormalizer;
 import com.auralink.catalogauth.CatalogAuthStore;
+import com.auralink.catalogread.CatalogMediaService;
 import com.auralink.catalogread.CatalogReadStore;
 import com.auralink.config.properties.PaintingProperties;
 import com.auralink.entity.BasePublicIdEntity;
@@ -304,18 +305,8 @@ public class PaintingQueryService {
    }
 
    private PaintingSummaryResponse catalogDaily(CatalogReadStore store, Optional<User> user) {
-      CatalogReadStore.CatalogPage first = store.list(
-         new CatalogReadStore.CatalogQuery(null, null, null, null, null, null, null, null, null, null, null, 0, 1, "source", "asc")
-      );
-      if (first.totalElements() == 0L) {
-         throw paintingNotFound();
-      }
-
-      int index = Math.toIntExact(Math.floorMod(LocalDate.now(this.paintingProperties.getDailyZone()).toEpochDay(), first.totalElements()));
-      CatalogReadStore.CatalogPage selected = store.list(
-         new CatalogReadStore.CatalogQuery(null, null, null, null, null, null, null, null, null, null, null, index, 1, "source", "asc")
-      );
-      CatalogReadStore.CatalogPainting painting = selected.items().stream().findFirst().orElseThrow(PaintingQueryService::paintingNotFound);
+      CatalogReadStore.CatalogPainting painting = store.findDailyPainting(this.currentOrderDate(null))
+         .orElseThrow(PaintingQueryService::paintingNotFound);
       return this.catalogSummary(painting, this.catalogFavoritedIds(user, List.of(painting)).contains(painting.publicId()));
    }
 
@@ -413,7 +404,9 @@ public class PaintingQueryService {
 
       CatalogReadStore.CatalogMediaAsset image = painting.image();
       String base = "/api/v1/assets/" + image.publicId();
-      return new PaintingImageResponse(image.publicId(), image.mimeType(), null, null, null, base + "/content", base + "/download");
+      return new PaintingImageResponse(
+         image.publicId(), image.mimeType(), null, null, null, base + "/content", base + "/download", CatalogMediaService.thumbnailPath(image)
+      );
    }
 
    private PaintingAnnotationResponse catalogAnnotation(CatalogReadStore.CatalogAnnotation annotation) {
