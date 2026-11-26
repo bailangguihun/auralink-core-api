@@ -121,6 +121,24 @@ public class MediaAssetController {
          : MediaAssetResponse.from(this.mediaAssetService.getAccessibleAsset(assetId));
    }
 
+   @GetMapping(CatalogMediaService.THUMBNAIL_ROUTE)
+   public ResponseEntity<byte[]> getPublicCatalogThumbnail(@PathVariable String assetId, @PathVariable String sourceHash) {
+      CatalogMediaService service = this.catalogMediaServiceProvider.getIfAvailable();
+      try {
+         var thumbnail = service == null ? null : service.findThumbnail(assetId, sourceHash).orElse(null);
+         if (thumbnail != null) {
+            return ResponseEntity.ok()
+               .contentType(MediaType.IMAGE_JPEG)
+               .cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePublic().immutable())
+               .eTag(thumbnail.sha256())
+               .body(thumbnail.bytes());
+         }
+      } catch (ApiV1Exception exception) {
+         return ResponseEntity.status(exception.getStatus()).cacheControl(CacheControl.noStore()).build();
+      }
+      return ResponseEntity.status(HttpStatus.NOT_FOUND).cacheControl(CacheControl.noStore()).build();
+   }
+
    @GetMapping("/{assetId}/content")
    public ResponseEntity<Resource> getContent(@PathVariable String assetId) {
       CatalogMediaService.CatalogMediaContent catalogContent = this.catalogContent(assetId);

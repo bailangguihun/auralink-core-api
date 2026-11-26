@@ -141,4 +141,23 @@ class GalleryDailyOrderPostgresTest {
       assertThrows(IllegalArgumentException.class,
          () -> store.list(query(0, 24, "daily", "asc", null, null, null)));
    }
+
+   @Test void dailyRecommendationMatchesSourceOrderAcrossWrapsAndTies() {
+      jdbc.update("UPDATE catalog_source_records SET source_record_key = 'source-002' WHERE painting_id = ?", id(3));
+      jdbc.update("UPDATE catalog_source_records SET source_record_key = NULL WHERE painting_id = ?", id(24));
+      jdbc.update("INSERT INTO catalog_media_assets VALUES (?, ?, 1, 'images/first.jpg', 'catalog:first', 'sample', 'ACTIVE')", id(100), firstBatch);
+      jdbc.update("UPDATE catalog_paintings SET image_asset_id = ? WHERE public_id = ?", id(100), id(1));
+      var sourceRows = store.list(query(0, 24, "source", "asc", null, null, null)).items();
+      assertEquals(24, sourceRows.size());
+      assertNotNull(sourceRows.get(0).image());
+      for (long epochDay = -1; epochDay <= sourceRows.size(); epochDay++) {
+         var expected = sourceRows.get(Math.floorMod(epochDay, sourceRows.size()));
+         assertEquals(expected, store.findDailyPainting(LocalDate.ofEpochDay(epochDay)).orElseThrow());
+      }
+   }
+
+   @Test void dailyRecommendationReturnsEmptyWhenNoPaintingIsEligible() {
+      jdbc.update("UPDATE catalog_paintings SET catalog_status = 'INACTIVE'");
+      assertTrue(store.findDailyPainting(DAY).isEmpty());
+   }
 }
