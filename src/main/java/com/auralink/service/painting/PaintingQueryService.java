@@ -58,6 +58,7 @@ public class PaintingQueryService {
    private final ObjectProvider<CatalogReadStore> catalogReadStoreProvider;
    private final ObjectProvider<CatalogAuthStore> catalogAuthStoreProvider;
    private final Clock clock;
+   private final ObjectProvider<CatalogMediaService> catalogMediaServiceProvider;
 
    public PaintingPageResponse listPaintings(
       String keyword,
@@ -404,9 +405,12 @@ public class PaintingQueryService {
 
       CatalogReadStore.CatalogMediaAsset image = painting.image();
       String base = "/api/v1/assets/" + image.publicId();
-      return new PaintingImageResponse(
-         image.publicId(), image.mimeType(), null, null, null, base + "/content", base + "/download", CatalogMediaService.thumbnailPath(image)
-      );
+      var service = this.catalogMediaServiceProvider == null ? null : this.catalogMediaServiceProvider.getIfAvailable();
+      var dimensions = service == null ? null : service.cachedThumbnailDimensions(image);
+      return new PaintingImageResponse(image.publicId(), image.mimeType(), null,
+         dimensions == null ? null : dimensions.width(), dimensions == null ? null : dimensions.height(),
+         base + "/content", base + "/download", CatalogMediaService.thumbnailPath(image),
+         CatalogMediaService.previewPath(image), CatalogMediaService.smallPreviewPath(image));
    }
 
    private PaintingAnnotationResponse catalogAnnotation(CatalogReadStore.CatalogAnnotation annotation) {
@@ -495,7 +499,6 @@ public class PaintingQueryService {
       return new ApiV1Exception(HttpStatus.CONFLICT, ApiErrorCode.CATALOG_READ_WRITE_UNSUPPORTED, "当前目录集成未启用这项关联业务写入");
    }
 
-   @Autowired
    public PaintingQueryService(
       final PaintingRepository paintingRepository,
       final PaintingFavoriteRepository favoriteRepository,
@@ -510,6 +513,17 @@ public class PaintingQueryService {
          dynastyNormalizer, catalogReadStoreProvider, catalogAuthStoreProvider, Clock.systemUTC());
    }
 
+   @Autowired
+   public PaintingQueryService(
+      PaintingRepository paintingRepository, PaintingFavoriteRepository favoriteRepository, CurrentUserService currentUserService,
+      PaintingResponseMapper responseMapper, PaintingProperties paintingProperties, DynastyNormalizer dynastyNormalizer,
+      ObjectProvider<CatalogReadStore> catalogReadStoreProvider, ObjectProvider<CatalogAuthStore> catalogAuthStoreProvider,
+      ObjectProvider<CatalogMediaService> catalogMediaServiceProvider
+   ) {
+      this(paintingRepository, favoriteRepository, currentUserService, responseMapper, paintingProperties,
+         dynastyNormalizer, catalogReadStoreProvider, catalogAuthStoreProvider, Clock.systemUTC(), catalogMediaServiceProvider);
+   }
+
    PaintingQueryService(
       final PaintingRepository paintingRepository,
       final PaintingFavoriteRepository favoriteRepository,
@@ -521,6 +535,17 @@ public class PaintingQueryService {
       final ObjectProvider<CatalogAuthStore> catalogAuthStoreProvider,
       final Clock clock
    ) {
+      this(paintingRepository, favoriteRepository, currentUserService, responseMapper, paintingProperties,
+         dynastyNormalizer, catalogReadStoreProvider, catalogAuthStoreProvider, clock, null);
+   }
+
+   private PaintingQueryService(
+      PaintingRepository paintingRepository, PaintingFavoriteRepository favoriteRepository, CurrentUserService currentUserService,
+      PaintingResponseMapper responseMapper, PaintingProperties paintingProperties, DynastyNormalizer dynastyNormalizer,
+      ObjectProvider<CatalogReadStore> catalogReadStoreProvider, ObjectProvider<CatalogAuthStore> catalogAuthStoreProvider,
+      Clock clock, ObjectProvider<CatalogMediaService> catalogMediaServiceProvider
+   ) {
+      this.catalogMediaServiceProvider = catalogMediaServiceProvider;
       this.paintingRepository = paintingRepository;
       this.favoriteRepository = favoriteRepository;
       this.currentUserService = currentUserService;

@@ -7,11 +7,20 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "auralink.catalog-read")
 public class CatalogReadProperties {
    private boolean enabled;
+   private String thumbnailCacheDirectory;
    private CatalogReadProperties.Datasource datasource = new CatalogReadProperties.Datasource();
    private List<CatalogReadProperties.BatchMediaRoot> batchMediaRoots = new ArrayList<>();
 
    public boolean isEnabled() {
       return this.enabled;
+   }
+
+   public String getThumbnailCacheDirectory() {
+      return this.thumbnailCacheDirectory;
+   }
+
+   public void setThumbnailCacheDirectory(String thumbnailCacheDirectory) {
+      this.thumbnailCacheDirectory = thumbnailCacheDirectory;
    }
 
    public CatalogReadProperties.Datasource getDatasource() {

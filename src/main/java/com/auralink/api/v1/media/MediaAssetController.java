@@ -121,11 +121,21 @@ public class MediaAssetController {
          : MediaAssetResponse.from(this.mediaAssetService.getAccessibleAsset(assetId));
    }
 
-   @GetMapping(CatalogMediaService.THUMBNAIL_ROUTE)
+   @GetMapping({CatalogMediaService.THUMBNAIL_ROUTE, CatalogMediaService.LEGACY_THUMBNAIL_ROUTE})
    public ResponseEntity<byte[]> getPublicCatalogThumbnail(@PathVariable String assetId, @PathVariable String sourceHash) {
+      return this.getPublicCatalogThumbnail(assetId, sourceHash, false);
+   }
+
+   @GetMapping(CatalogMediaService.SMALL_THUMBNAIL_ROUTE)
+   public ResponseEntity<byte[]> getSmallPublicCatalogThumbnail(@PathVariable String assetId, @PathVariable String sourceHash) {
+      return this.getPublicCatalogThumbnail(assetId, sourceHash, true);
+   }
+
+   private ResponseEntity<byte[]> getPublicCatalogThumbnail(String assetId, String sourceHash, boolean small) {
       CatalogMediaService service = this.catalogMediaServiceProvider.getIfAvailable();
       try {
-         var thumbnail = service == null ? null : service.findThumbnail(assetId, sourceHash).orElse(null);
+         var thumbnail = service == null ? null
+            : (small ? service.findSmallThumbnail(assetId, sourceHash) : service.findThumbnail(assetId, sourceHash)).orElse(null);
          if (thumbnail != null) {
             return ResponseEntity.ok()
                .contentType(MediaType.IMAGE_JPEG)
