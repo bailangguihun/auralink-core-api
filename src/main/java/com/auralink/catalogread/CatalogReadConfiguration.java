@@ -2,12 +2,15 @@ package com.auralink.catalogread;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import java.nio.file.Path;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
 @Configuration
@@ -46,7 +49,12 @@ public class CatalogReadConfiguration {
    }
 
    @Bean
-   CatalogMediaService catalogMediaService(CatalogReadStore catalogReadStore, CatalogReadProperties catalogReadProperties) {
-      return new CatalogMediaService(catalogReadStore, catalogReadProperties);
+   CatalogMediaService catalogMediaService(CatalogReadStore catalogReadStore, CatalogReadProperties properties, Environment environment) {
+      if (properties.getThumbnailCacheDirectory() == null
+          && environment.acceptsProfiles(Profiles.of("catalog-postgres-production & !catalog-postgres-cutover-readonly"))) {
+         // The managed launcher supplies a private, persistent Java home.
+         properties.setThumbnailCacheDirectory(Path.of(System.getProperty("user.home"), "catalog-thumbnail-cache").toString());
+      }
+      return new CatalogMediaService(catalogReadStore, properties);
    }
 }

@@ -1,5 +1,5 @@
 # Production PostgreSQL overlay. It is inert unless explicitly selected as a
-# Spring profile. Credentials and data roots come from private runtime configuration;
+# Spring profile. Values are supplied only by a mode-0600 runtime profile;
 # there are deliberately no SQLite, local-stub, or provider-key defaults here.
 server:
   address: 127.0.0.1
@@ -44,8 +44,6 @@ auralink:
     picture-dir: "${ARTLIVE_CATALOG_LEGACY_PICTURE_DIR:}"
   catalog-read:
     enabled: true
-    # R25 launches with an application-owned, persistent Java home.
-    thumbnail-cache-directory: "${user.home}/catalog-thumbnail-cache"
     datasource:
       jdbc-url: "${ARTLIVE_POSTGRES_JDBC_URL:}"
       username: "${ARTLIVE_POSTGRES_USERNAME:}"
