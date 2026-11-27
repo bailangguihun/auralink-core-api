@@ -75,7 +75,9 @@ public class SecurityConfig {
                                                                            "/api/v1/assets/{assetId}",
                                                                            "/api/v1/assets/{assetId}/content",
                                                                            "/api/v1/assets/{assetId}/download",
-                                                                           "/api/v1/assets/public-catalog-thumbnails/v1/{assetId}/{sourceHash}.jpg"
+                                                                           "/api/v1/assets/public-catalog-thumbnails/v1/{assetId}/{sourceHash}.jpg",
+                                                                           "/api/v1/assets/public-catalog-thumbnails/v2/{assetId}/{sourceHash}.jpg",
+                                                                           "/api/v1/assets/public-catalog-thumbnails/v2/480/{assetId}/{sourceHash}.jpg"
                                                                         }
                                                                      ))
                                                                   .permitAll()
@@ -85,7 +87,9 @@ public class SecurityConfig {
                                                                         "/api/v1/assets/{assetId}",
                                                                         "/api/v1/assets/{assetId}/content",
                                                                         "/api/v1/assets/{assetId}/download",
-                                                                        "/api/v1/assets/public-catalog-thumbnails/v1/{assetId}/{sourceHash}.jpg"
+                                                                        "/api/v1/assets/public-catalog-thumbnails/v1/{assetId}/{sourceHash}.jpg",
+                                                                           "/api/v1/assets/public-catalog-thumbnails/v2/{assetId}/{sourceHash}.jpg",
+                                                                           "/api/v1/assets/public-catalog-thumbnails/v2/480/{assetId}/{sourceHash}.jpg"
                                                                      }
                                                                   ))
                                                                .permitAll()

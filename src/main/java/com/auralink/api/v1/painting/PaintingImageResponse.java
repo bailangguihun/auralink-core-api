@@ -4,9 +4,11 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 
 public record PaintingImageResponse(
    String assetId, String mimeType, Long fileSize, Integer width, Integer height, String contentUrl, String downloadUrl,
-   @JsonInclude(JsonInclude.Include.NON_NULL) String thumbnailUrl
+   @JsonInclude(JsonInclude.Include.NON_NULL) String thumbnailUrl,
+   @JsonInclude(JsonInclude.Include.NON_NULL) String previewUrl,
+   @JsonInclude(JsonInclude.Include.NON_NULL) String smallPreviewUrl
 ) {
    public PaintingImageResponse(String assetId, String mimeType, Long fileSize, Integer width, Integer height, String contentUrl, String downloadUrl) {
-      this(assetId, mimeType, fileSize, width, height, contentUrl, downloadUrl, null);
+      this(assetId, mimeType, fileSize, width, height, contentUrl, downloadUrl, null, null, null);
    }
 }
