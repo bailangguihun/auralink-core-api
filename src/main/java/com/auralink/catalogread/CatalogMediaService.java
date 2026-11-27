@@ -22,10 +22,14 @@ import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.HttpStatus;
 
 public class CatalogMediaService {
-   public static final String THUMBNAIL_ROUTE = "/public-catalog-thumbnails/v1/{assetId}/{sourceHash}.jpg";
-   private static final String THUMBNAIL_BASE = "/api/v1/assets/public-catalog-thumbnails/v1/";
+   public static final String THUMBNAIL_ROUTE = "/public-catalog-thumbnails/v2/{assetId}/{sourceHash}.jpg";
+   public static final String SMALL_THUMBNAIL_ROUTE = "/public-catalog-thumbnails/v2/480/{assetId}/{sourceHash}.jpg";
+   public static final String LEGACY_THUMBNAIL_ROUTE = "/public-catalog-thumbnails/v1/{assetId}/{sourceHash}.jpg";
+   private static final String THUMBNAIL_BASE = "/api/v1/assets/public-catalog-thumbnails/";
    private static final Pattern ASSET_ID = Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
    private static final Pattern SOURCE_HASH = Pattern.compile("[0-9a-f]{64}");
+   private static final int STANDARD_THUMBNAIL_SIDE = 720;
+   private static final int SMALL_THUMBNAIL_SIDE = 480;
    private static final int MAX_CACHED_THUMBNAILS = 96;
    private static final long THUMBNAIL_QUEUE_TIMEOUT_MS = 450;
    private final Map<String, ThumbnailContent> thumbnails = Collections.synchronizedMap(
@@ -37,12 +41,14 @@ public class CatalogMediaService {
       }
    );
    private final Semaphore thumbnailDecoders = new Semaphore(4, true);
+   private final CatalogThumbnailCache thumbnailCache;
    private final CatalogReadStore store;
    private final CatalogReadProperties properties;
 
    CatalogMediaService(CatalogReadStore store, CatalogReadProperties properties) {
       this.store = store;
       this.properties = properties;
+      this.thumbnailCache = new CatalogThumbnailCache(properties.getThumbnailCacheDirectory());
    }
 
    public Optional<CatalogMediaService.CatalogMediaContent> find(String assetId) {
@@ -50,29 +56,58 @@ public class CatalogMediaService {
    }
 
    public static String thumbnailPath(CatalogReadStore.CatalogMediaAsset asset) {
+      String hash = eligibleHash(asset);
+      return hash == null || !"image/jpeg".equalsIgnoreCase(asset.mimeType())
+         ? null : THUMBNAIL_BASE + "v1/" + asset.publicId() + "/" + hash + ".jpg";
+   }
+
+   public static String previewPath(CatalogReadStore.CatalogMediaAsset asset) {
+      String hash = eligibleHash(asset);
+      return hash == null ? null : THUMBNAIL_BASE + "v2/" + asset.publicId() + "/" + hash + ".jpg";
+   }
+
+   public static String smallPreviewPath(CatalogReadStore.CatalogMediaAsset asset) {
+      String hash = eligibleHash(asset);
+      return hash == null ? null : THUMBNAIL_BASE + "v2/480/" + asset.publicId() + "/" + hash + ".jpg";
+   }
+
+   private static String eligibleHash(CatalogReadStore.CatalogMediaAsset asset) {
       String hash = asset.contentSha256() == null ? "" : asset.contentSha256().toLowerCase(Locale.ROOT);
-      if (!"image/jpeg".equalsIgnoreCase(asset.mimeType()) || !ASSET_ID.matcher(asset.publicId()).matches()
-         || !SOURCE_HASH.matcher(hash).matches()) {
-         return null;
-      }
-      return THUMBNAIL_BASE + asset.publicId() + "/" + hash + ".jpg";
+      boolean supported = "image/jpeg".equalsIgnoreCase(asset.mimeType()) || "image/png".equalsIgnoreCase(asset.mimeType());
+      return supported && ASSET_ID.matcher(asset.publicId()).matches() && SOURCE_HASH.matcher(hash).matches() ? hash : null;
+   }
+
+   public ThumbnailDimensions cachedThumbnailDimensions(CatalogReadStore.CatalogMediaAsset asset) {
+      String hash = eligibleHash(asset);
+      if (hash == null) return null;
+      String key = asset.publicId() + "-" + hash;
+      var standard = this.cachedThumbnailDimensions(key);
+      return standard == null ? this.cachedThumbnailDimensions("480-" + key) : standard;
+   }
+
+   private ThumbnailDimensions cachedThumbnailDimensions(String key) {
+      var cached = this.thumbnails.get(key);
+      return cached == null ? this.thumbnailCache.dimensions(key) : cached.dimensions();
    }
 
    public Optional<ThumbnailContent> findThumbnail(String assetId, String sourceHash) {
+      return this.findThumbnail(assetId, sourceHash, STANDARD_THUMBNAIL_SIDE);
+   }
+
+   public Optional<ThumbnailContent> findSmallThumbnail(String assetId, String sourceHash) {
+      return this.findThumbnail(assetId, sourceHash, SMALL_THUMBNAIL_SIDE);
+   }
+
+   private Optional<ThumbnailContent> findThumbnail(String assetId, String sourceHash, int maxSide) {
       if (!ASSET_ID.matcher(assetId).matches() || !SOURCE_HASH.matcher(sourceHash).matches()) {
          return Optional.empty();
       }
-      // Check the active public registry on every miss at the edge, even if the
-      // rendered bytes are already in this process. Private media is never consulted.
+      // Active public assets are revalidated even if their derivatives are cached.
       var asset = this.store.findMedia(assetId).orElse(null);
-      String path = THUMBNAIL_BASE + assetId + "/" + sourceHash + ".jpg";
-      if (asset == null || !path.equals(thumbnailPath(asset))) {
-         return Optional.empty();
-      }
-      ThumbnailContent cached = this.thumbnails.get(path);
-      if (cached != null) {
-         return Optional.of(cached);
-      }
+      if (asset == null || !sourceHash.equals(eligibleHash(asset))) return Optional.empty();
+      String key = (maxSide == SMALL_THUMBNAIL_SIDE ? "480-" : "") + assetId + "-" + sourceHash;
+      ThumbnailContent cached = this.thumbnails.get(key);
+      if (cached != null) return Optional.of(cached);
 
       try {
          if (!this.thumbnailDecoders.tryAcquire(THUMBNAIL_QUEUE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
@@ -83,16 +118,17 @@ public class CatalogMediaService {
          throw unavailable();
       }
       try {
-         cached = this.thumbnails.get(path);
-         if (cached != null) {
-            return Optional.of(cached);
+         cached = this.thumbnails.get(key);
+         if (cached != null) return Optional.of(cached);
+         var preview = this.thumbnailCache.read(key);
+         if (preview == null) {
+            preview = CatalogThumbnail.render(this.resolve(asset), maxSide);
+            if (preview == null) return Optional.empty();
+            this.thumbnailCache.write(key, preview);
          }
-         byte[] bytes = CatalogThumbnail.render(this.resolve(asset));
-         if (bytes == null) {
-            return Optional.empty();
-         }
-         var thumbnail = new ThumbnailContent(bytes, HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
-         this.thumbnails.put(path, thumbnail);
+         String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(preview.bytes()));
+         var thumbnail = new ThumbnailContent(preview.bytes(), digest, new ThumbnailDimensions(preview.width(), preview.height()));
+         this.thumbnails.put(key, thumbnail);
          return Optional.of(thumbnail);
       } catch (IOException | IllegalArgumentException exception) {
          return Optional.empty();
@@ -103,8 +139,9 @@ public class CatalogMediaService {
       }
    }
 
-   public record ThumbnailContent(byte[] bytes, String sha256) {
-   }
+   public record ThumbnailDimensions(int width, int height) {}
+
+   public record ThumbnailContent(byte[] bytes, String sha256, ThumbnailDimensions dimensions) {}
 
    private CatalogMediaService.CatalogMediaContent resolve(CatalogReadStore.CatalogMediaAsset asset) {
       CatalogReadProperties.BatchMediaRoot configuredRoot = this.properties
